@@ -1,0 +1,217 @@
+{
+  "_meta": {
+    "currency": "USD",
+    "hours_per_month": 730,
+    "pricing_model": "on-demand",
+    "notes": "Baseline approximations of public AWS on-demand list prices. Used as a deterministic guardrail so the agent cannot hallucinate the bill. Always check the official AWS pricing pages before signing a contract."
+  },
+  "regions": {
+    "ap-southeast-1": {
+      "name": "Asia Pacific (Singapore)",
+      "country": "Singapore",
+      "data_residency": ["PDPA-SG"],
+      "latency_to": { "MY": 15, "SG": 2, "ID": 25, "TH": 30, "PH": 40, "VN": 35, "AU": 90, "JP": 70, "IN": 60, "US": 220, "EU": 180 }
+    },
+    "ap-southeast-5": {
+      "name": "Asia Pacific (Malaysia)",
+      "country": "Malaysia",
+      "data_residency": ["PDPA-MY"],
+      "latency_to": { "MY": 2, "SG": 10, "ID": 30, "TH": 25, "PH": 50, "VN": 40, "AU": 100, "JP": 80, "IN": 65, "US": 230, "EU": 190 }
+    },
+    "ap-southeast-3": {
+      "name": "Asia Pacific (Jakarta)",
+      "country": "Indonesia",
+      "data_residency": ["UU-PDP-ID"],
+      "latency_to": { "MY": 30, "SG": 25, "ID": 2, "TH": 35, "PH": 50, "VN": 45, "AU": 80, "JP": 90, "IN": 80, "US": 240, "EU": 200 }
+    },
+    "ap-southeast-7": {
+      "name": "Asia Pacific (Thailand)",
+      "country": "Thailand",
+      "data_residency": ["PDPA-TH"],
+      "latency_to": { "MY": 25, "SG": 30, "ID": 35, "TH": 2, "PH": 55, "VN": 30, "AU": 110, "JP": 75, "IN": 70, "US": 235, "EU": 195 }
+    },
+    "ap-northeast-1": {
+      "name": "Asia Pacific (Tokyo)",
+      "country": "Japan",
+      "data_residency": ["APPI-JP"],
+      "latency_to": { "MY": 80, "SG": 70, "ID": 90, "TH": 75, "PH": 60, "VN": 65, "AU": 120, "JP": 2, "IN": 130, "US": 150, "EU": 230 }
+    },
+    "ap-south-1": {
+      "name": "Asia Pacific (Mumbai)",
+      "country": "India",
+      "data_residency": ["DPDP-IN"],
+      "latency_to": { "MY": 65, "SG": 60, "ID": 80, "TH": 70, "PH": 100, "VN": 80, "AU": 200, "JP": 130, "IN": 2, "US": 200, "EU": 130 }
+    },
+    "us-east-1": {
+      "name": "US East (N. Virginia)",
+      "country": "United States",
+      "data_residency": ["HIPAA", "SOC2", "FedRAMP-Moderate"],
+      "latency_to": { "MY": 230, "SG": 220, "ID": 240, "TH": 235, "PH": 220, "VN": 230, "AU": 200, "JP": 150, "IN": 200, "US": 5, "EU": 80 }
+    },
+    "eu-west-1": {
+      "name": "Europe (Ireland)",
+      "country": "Ireland",
+      "data_residency": ["GDPR"],
+      "latency_to": { "MY": 190, "SG": 180, "ID": 200, "TH": 195, "PH": 210, "VN": 200, "AU": 270, "JP": 230, "IN": 130, "US": 80, "EU": 5 }
+    }
+  },
+  "services": {
+    "EC2": {
+      "category": "Compute",
+      "billing_unit": "instance-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "instance_types": {
+        "t3.micro":  { "vcpu": 2, "ram_gb": 1,  "price_per_hour": { "ap-southeast-1": 0.0128, "ap-southeast-3": 0.0136, "ap-southeast-5": 0.0136, "ap-southeast-7": 0.0140, "ap-northeast-1": 0.0136, "ap-south-1": 0.0112, "us-east-1": 0.0104, "eu-west-1": 0.0114 } },
+        "t3.small":  { "vcpu": 2, "ram_gb": 2,  "price_per_hour": { "ap-southeast-1": 0.0256, "ap-southeast-3": 0.0272, "ap-southeast-5": 0.0272, "ap-southeast-7": 0.0280, "ap-northeast-1": 0.0272, "ap-south-1": 0.0224, "us-east-1": 0.0208, "eu-west-1": 0.0228 } },
+        "t3.medium": { "vcpu": 2, "ram_gb": 4,  "price_per_hour": { "ap-southeast-1": 0.0512, "ap-southeast-3": 0.0544, "ap-southeast-5": 0.0544, "ap-southeast-7": 0.0560, "ap-northeast-1": 0.0544, "ap-south-1": 0.0448, "us-east-1": 0.0416, "eu-west-1": 0.0456 } },
+        "t3.large":  { "vcpu": 2, "ram_gb": 8,  "price_per_hour": { "ap-southeast-1": 0.1024, "ap-southeast-3": 0.1088, "ap-southeast-5": 0.1088, "ap-southeast-7": 0.1120, "ap-northeast-1": 0.1088, "ap-south-1": 0.0896, "us-east-1": 0.0832, "eu-west-1": 0.0912 } },
+        "m5.large":  { "vcpu": 2, "ram_gb": 8,  "price_per_hour": { "ap-southeast-1": 0.120,  "ap-southeast-3": 0.126,  "ap-southeast-5": 0.126,  "ap-southeast-7": 0.130,  "ap-northeast-1": 0.124,  "ap-south-1": 0.105,  "us-east-1": 0.096,  "eu-west-1": 0.107 } },
+        "m5.xlarge": { "vcpu": 4, "ram_gb": 16, "price_per_hour": { "ap-southeast-1": 0.240,  "ap-southeast-3": 0.252,  "ap-southeast-5": 0.252,  "ap-southeast-7": 0.260,  "ap-northeast-1": 0.248,  "ap-south-1": 0.210,  "us-east-1": 0.192,  "eu-west-1": 0.214 } },
+        "m5.2xlarge":{ "vcpu": 8, "ram_gb": 32, "price_per_hour": { "ap-southeast-1": 0.480,  "ap-southeast-3": 0.504,  "ap-southeast-5": 0.504,  "ap-southeast-7": 0.520,  "ap-northeast-1": 0.496,  "ap-south-1": 0.420,  "us-east-1": 0.384,  "eu-west-1": 0.428 } },
+        "c5.large":  { "vcpu": 2, "ram_gb": 4,  "price_per_hour": { "ap-southeast-1": 0.106,  "ap-southeast-3": 0.111,  "ap-southeast-5": 0.111,  "ap-southeast-7": 0.115,  "ap-northeast-1": 0.107,  "ap-south-1": 0.085,  "us-east-1": 0.085,  "eu-west-1": 0.097 } },
+        "c5.xlarge": { "vcpu": 4, "ram_gb": 8,  "price_per_hour": { "ap-southeast-1": 0.212,  "ap-southeast-3": 0.222,  "ap-southeast-5": 0.222,  "ap-southeast-7": 0.230,  "ap-northeast-1": 0.214,  "ap-south-1": 0.170,  "us-east-1": 0.170,  "eu-west-1": 0.194 } },
+        "r5.large":  { "vcpu": 2, "ram_gb": 16, "price_per_hour": { "ap-southeast-1": 0.158,  "ap-southeast-3": 0.166,  "ap-southeast-5": 0.166,  "ap-southeast-7": 0.172,  "ap-northeast-1": 0.164,  "ap-south-1": 0.139,  "us-east-1": 0.126,  "eu-west-1": 0.142 } },
+        "r5.xlarge": { "vcpu": 4, "ram_gb": 32, "price_per_hour": { "ap-southeast-1": 0.316,  "ap-southeast-3": 0.332,  "ap-southeast-5": 0.332,  "ap-southeast-7": 0.344,  "ap-northeast-1": 0.328,  "ap-south-1": 0.278,  "us-east-1": 0.252,  "eu-west-1": 0.284 } }
+      }
+    },
+    "RDS": {
+      "category": "Database",
+      "billing_unit": "instance-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "engines": ["mysql","postgres","mariadb","aurora-mysql","aurora-postgres","oracle","sqlserver"],
+      "instance_types": {
+        "db.t3.medium":   { "vcpu": 2, "ram_gb": 4,   "price_per_hour": { "ap-southeast-1": 0.090, "ap-southeast-3": 0.095, "ap-southeast-5": 0.095, "ap-southeast-7": 0.098, "ap-northeast-1": 0.094, "ap-south-1": 0.075, "us-east-1": 0.072, "eu-west-1": 0.082 } },
+        "db.m5.large":    { "vcpu": 2, "ram_gb": 8,   "price_per_hour": { "ap-southeast-1": 0.205, "ap-southeast-3": 0.215, "ap-southeast-5": 0.215, "ap-southeast-7": 0.222, "ap-northeast-1": 0.213, "ap-south-1": 0.171, "us-east-1": 0.171, "eu-west-1": 0.196 } },
+        "db.m5.xlarge":   { "vcpu": 4, "ram_gb": 16,  "price_per_hour": { "ap-southeast-1": 0.410, "ap-southeast-3": 0.430, "ap-southeast-5": 0.430, "ap-southeast-7": 0.444, "ap-northeast-1": 0.426, "ap-south-1": 0.342, "us-east-1": 0.342, "eu-west-1": 0.392 } },
+        "db.r5.large":    { "vcpu": 2, "ram_gb": 16,  "price_per_hour": { "ap-southeast-1": 0.290, "ap-southeast-3": 0.305, "ap-southeast-5": 0.305, "ap-southeast-7": 0.315, "ap-northeast-1": 0.300, "ap-south-1": 0.241, "us-east-1": 0.240, "eu-west-1": 0.275 } },
+        "db.r5.xlarge":   { "vcpu": 4, "ram_gb": 32,  "price_per_hour": { "ap-southeast-1": 0.580, "ap-southeast-3": 0.610, "ap-southeast-5": 0.610, "ap-southeast-7": 0.630, "ap-northeast-1": 0.600, "ap-south-1": 0.482, "us-east-1": 0.480, "eu-west-1": 0.550 } },
+        "db.r5.2xlarge":  { "vcpu": 8, "ram_gb": 64,  "price_per_hour": { "ap-southeast-1": 1.160, "ap-southeast-3": 1.220, "ap-southeast-5": 1.220, "ap-southeast-7": 1.260, "ap-northeast-1": 1.200, "ap-south-1": 0.964, "us-east-1": 0.960, "eu-west-1": 1.100 } }
+      },
+      "storage_per_gb_month": { "ap-southeast-1": 0.138, "ap-southeast-3": 0.145, "ap-southeast-5": 0.145, "ap-southeast-7": 0.150, "ap-northeast-1": 0.138, "ap-south-1": 0.115, "us-east-1": 0.115, "eu-west-1": 0.127 },
+      "multi_az_multiplier": 2.0
+    },
+    "DynamoDB": {
+      "category": "Database",
+      "billing_unit": "request-and-storage",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "on_demand": {
+        "write_per_million": { "ap-southeast-1": 1.4231, "ap-southeast-3": 1.4231, "ap-southeast-5": 1.4231, "ap-southeast-7": 1.4231, "ap-northeast-1": 1.4231, "ap-south-1": 1.4231, "us-east-1": 1.25, "eu-west-1": 1.4231 },
+        "read_per_million":  { "ap-southeast-1": 0.285,  "ap-southeast-3": 0.285,  "ap-southeast-5": 0.285,  "ap-southeast-7": 0.285,  "ap-northeast-1": 0.285,  "ap-south-1": 0.285,  "us-east-1": 0.25,  "eu-west-1": 0.285 },
+        "storage_per_gb_month": { "ap-southeast-1": 0.25, "ap-southeast-3": 0.25, "ap-southeast-5": 0.25, "ap-southeast-7": 0.25, "ap-northeast-1": 0.25, "ap-south-1": 0.25, "us-east-1": 0.25, "eu-west-1": 0.25 }
+      }
+    },
+    "S3": {
+      "category": "Storage",
+      "billing_unit": "gb-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "standard_per_gb_month": { "ap-southeast-1": 0.025, "ap-southeast-3": 0.025, "ap-southeast-5": 0.025, "ap-southeast-7": 0.026, "ap-northeast-1": 0.025, "ap-south-1": 0.023, "us-east-1": 0.023, "eu-west-1": 0.023 },
+      "request_per_1k_put":    { "ap-southeast-1": 0.005, "ap-southeast-3": 0.005, "ap-southeast-5": 0.005, "ap-southeast-7": 0.005, "ap-northeast-1": 0.005, "ap-south-1": 0.005, "us-east-1": 0.005, "eu-west-1": 0.005 },
+        "request_per_1k_get":  { "ap-southeast-1": 0.0004,"ap-southeast-3": 0.0004,"ap-southeast-5": 0.0004,"ap-southeast-7": 0.0004,"ap-northeast-1": 0.0004,"ap-south-1": 0.0004,"us-east-1": 0.0004,"eu-west-1": 0.0004 }
+    },
+    "EBS": {
+      "category": "Storage",
+      "billing_unit": "gb-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "gp3_per_gb_month": { "ap-southeast-1": 0.096, "ap-southeast-3": 0.10, "ap-southeast-5": 0.10, "ap-southeast-7": 0.104, "ap-northeast-1": 0.096, "ap-south-1": 0.0832, "us-east-1": 0.08, "eu-west-1": 0.0888 }
+    },
+    "ALB": {
+      "category": "Networking",
+      "billing_unit": "lb-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "fixed_per_hour": { "ap-southeast-1": 0.0252, "ap-southeast-3": 0.0270, "ap-southeast-5": 0.0270, "ap-southeast-7": 0.0280, "ap-northeast-1": 0.0243, "ap-south-1": 0.0225, "us-east-1": 0.0225, "eu-west-1": 0.0252 },
+      "lcu_per_hour":   { "ap-southeast-1": 0.008,  "ap-southeast-3": 0.008,  "ap-southeast-5": 0.008,  "ap-southeast-7": 0.008,  "ap-northeast-1": 0.008,  "ap-south-1": 0.008,  "us-east-1": 0.008,  "eu-west-1": 0.008 }
+    },
+    "NATGateway": {
+      "category": "Networking",
+      "billing_unit": "gateway-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "fixed_per_hour": { "ap-southeast-1": 0.059, "ap-southeast-3": 0.062, "ap-southeast-5": 0.062, "ap-southeast-7": 0.064, "ap-northeast-1": 0.062, "ap-south-1": 0.056, "us-east-1": 0.045, "eu-west-1": 0.048 },
+      "data_per_gb":    { "ap-southeast-1": 0.059, "ap-southeast-3": 0.062, "ap-southeast-5": 0.062, "ap-southeast-7": 0.064, "ap-northeast-1": 0.062, "ap-south-1": 0.056, "us-east-1": 0.045, "eu-west-1": 0.048 }
+    },
+    "CloudFront": {
+      "category": "Networking",
+      "billing_unit": "gb-month",
+      "available_in": ["GLOBAL"],
+      "data_per_gb_apac": 0.114,
+      "data_per_gb_us":   0.085,
+      "data_per_gb_eu":   0.085,
+      "request_per_10k":  0.0090
+    },
+    "Route53": {
+      "category": "Networking",
+      "billing_unit": "fixed",
+      "available_in": ["GLOBAL"],
+      "hosted_zone_per_month": 0.50,
+      "queries_per_million_first_billion": 0.40
+    },
+    "Lambda": {
+      "category": "Compute",
+      "billing_unit": "request-and-gb-second",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "request_per_million":   { "ap-southeast-1": 0.20, "ap-southeast-3": 0.20, "ap-southeast-5": 0.20, "ap-southeast-7": 0.20, "ap-northeast-1": 0.20, "ap-south-1": 0.20, "us-east-1": 0.20, "eu-west-1": 0.20 },
+      "gb_second":             { "ap-southeast-1": 0.0000166667, "ap-southeast-3": 0.0000166667, "ap-southeast-5": 0.0000166667, "ap-southeast-7": 0.0000166667, "ap-northeast-1": 0.0000166667, "ap-south-1": 0.0000166667, "us-east-1": 0.0000166667, "eu-west-1": 0.0000166667 }
+    },
+    "ElastiCache": {
+      "category": "Database",
+      "billing_unit": "instance-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "instance_types": {
+        "cache.t3.micro":  { "vcpu": 2, "ram_gb": 0.5, "price_per_hour": { "ap-southeast-1": 0.022, "ap-southeast-3": 0.024, "ap-southeast-5": 0.024, "ap-southeast-7": 0.025, "ap-northeast-1": 0.022, "ap-south-1": 0.018, "us-east-1": 0.017, "eu-west-1": 0.020 } },
+        "cache.m5.large":  { "vcpu": 2, "ram_gb": 6.4, "price_per_hour": { "ap-southeast-1": 0.182, "ap-southeast-3": 0.190, "ap-southeast-5": 0.190, "ap-southeast-7": 0.195, "ap-northeast-1": 0.188, "ap-south-1": 0.149, "us-east-1": 0.156, "eu-west-1": 0.176 } },
+        "cache.r5.large":  { "vcpu": 2, "ram_gb": 13.07,"price_per_hour": { "ap-southeast-1": 0.252, "ap-southeast-3": 0.265, "ap-southeast-5": 0.265, "ap-southeast-7": 0.273, "ap-northeast-1": 0.260, "ap-south-1": 0.209, "us-east-1": 0.216, "eu-west-1": 0.241 } }
+      }
+    },
+    "EKS": {
+      "category": "Compute",
+      "billing_unit": "cluster-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "control_plane_per_hour": 0.10
+    },
+    "WAF": {
+      "category": "Security",
+      "billing_unit": "fixed",
+      "available_in": ["GLOBAL"],
+      "web_acl_per_month": 5.00,
+      "rule_per_month": 1.00,
+      "request_per_million": 0.60
+    },
+    "Shield": {
+      "category": "Security",
+      "billing_unit": "fixed",
+      "available_in": ["GLOBAL"],
+      "standard_per_month": 0.00,
+      "advanced_per_month": 3000.00
+    },
+    "KMS": {
+      "category": "Security",
+      "billing_unit": "fixed",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "key_per_month": 1.00,
+      "request_per_10k": 0.03
+    },
+    "Backup": {
+      "category": "Storage",
+      "billing_unit": "gb-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "warm_per_gb_month": 0.05
+    },
+    "DataTransferOut": {
+      "category": "Networking",
+      "billing_unit": "gb-month",
+      "available_in": ["ap-southeast-1","ap-southeast-3","ap-southeast-5","ap-southeast-7","ap-northeast-1","ap-south-1","us-east-1","eu-west-1"],
+      "first_10tb_per_gb": { "ap-southeast-1": 0.12, "ap-southeast-3": 0.132, "ap-southeast-5": 0.132, "ap-southeast-7": 0.135, "ap-northeast-1": 0.114, "ap-south-1": 0.1093, "us-east-1": 0.09, "eu-west-1": 0.09 }
+    }
+  },
+  "compliance_frameworks": {
+    "PDPA-MY":      { "full_name": "Personal Data Protection Act 2010 (Malaysia)", "data_must_stay_in": ["MY"] },
+    "PDPA-SG":      { "full_name": "Personal Data Protection Act 2012 (Singapore)", "data_must_stay_in": ["SG"] },
+    "UU-PDP-ID":    { "full_name": "Undang-Undang Pelindungan Data Pribadi (Indonesia)", "data_must_stay_in": ["ID"] },
+    "PDPA-TH":      { "full_name": "Personal Data Protection Act B.E. 2562 (Thailand)", "data_must_stay_in": ["TH"] },
+    "APPI-JP":      { "full_name": "Act on the Protection of Personal Information (Japan)", "data_must_stay_in": ["JP"] },
+    "DPDP-IN":      { "full_name": "Digital Personal Data Protection Act 2023 (India)", "data_must_stay_in": ["IN"] },
+    "GDPR":         { "full_name": "General Data Protection Regulation (EU)", "data_must_stay_in": ["EU"] },
+    "HIPAA":        { "full_name": "Health Insurance Portability and Accountability Act (US)", "data_must_stay_in": ["US"] },
+    "SOC2":         { "full_name": "SOC 2 Type II", "data_must_stay_in": [] },
+    "FedRAMP-Moderate": { "full_name": "FedRAMP Moderate Baseline", "data_must_stay_in": ["US"] }
+  }
+}
