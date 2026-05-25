@@ -1,0 +1,38 @@
+.bits-borderglow {
+  position: relative;
+  display: block;
+  border-radius: 16px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.bits-borderglow-ring {
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(217, 119, 87, 0.0) 60deg,
+    rgba(217, 119, 87, 0.95) 90deg,
+    rgba(139, 92, 246, 0.95) 120deg,
+    rgba(6, 182, 212, 0.95) 150deg,
+    transparent 200deg,
+    transparent 360deg
+  );
+  animation: borderglow-spin 5s linear infinite;
+  z-index: 0;
+}
+.bits-borderglow-inner {
+  position: relative;
+  display: block;
+  border-radius: calc(inherit - 1px);
+  background: var(--bg-1);
+  z-index: 1;
+  height: 100%;
+}
+@keyframes borderglow-spin {
+  to { transform: rotate(360deg); }
+}
+.bits-borderglow:hover .bits-borderglow-ring {
+  animation-duration: 2.4s;
+}

@@ -1,0 +1,35 @@
+.bits-spotlight {
+  position: relative;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  --spot-x: 50%;
+  --spot-y: 50%;
+  --spot-color: rgba(217, 119, 87, 0.18);
+  transition: border-color 0.2s ease;
+}
+.bits-spotlight:hover {
+  border-color: var(--line-strong);
+}
+.bits-spotlight::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    400px circle at var(--spot-x) var(--spot-y),
+    var(--spot-color),
+    transparent 50%
+  );
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.bits-spotlight:hover::before {
+  opacity: 1;
+}
+.bits-spotlight > * {
+  position: relative;
+  z-index: 1;
+}

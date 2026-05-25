@@ -49,8 +49,11 @@ body {
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overflow: hidden;
 }
+/* Only the workspace clamps the viewport. Landing, services, detail pages
+   should scroll naturally. The Workspace component sets this class on body
+   while it's mounted. */
+body.workspace-mounted { overflow: hidden; }
 button { font-family: inherit; }
 
 /* Scrollbars */

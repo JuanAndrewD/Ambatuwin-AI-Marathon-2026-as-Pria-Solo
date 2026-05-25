@@ -24,6 +24,16 @@ export const api = {
   deleteProject: (id) => request('DELETE', `/api/projects/${id}`),
   clearChat: (id) => request('POST', `/api/projects/${id}/clear-chat`),
 
-  chat: (id, message) => request('POST', `/api/projects/${id}/chat`, { message }),
+  chat: (id, message, attachments) => request('POST', `/api/projects/${id}/chat`, { message, attachments }),
   designForProject: (id, opts = {}) => request('POST', `/api/projects/${id}/design`, opts),
+
+  listDocuments:    (pid) => request('GET',    `/api/projects/${pid}/documents`),
+  getDocument:      (pid, did) => request('GET',    `/api/projects/${pid}/documents/${did}`),
+  createDocument:   (pid, payload) => request('POST',   `/api/projects/${pid}/documents`, payload),
+  updateDocument:   (pid, did, patch) => request('PATCH',  `/api/projects/${pid}/documents/${did}`, patch),
+  deleteDocument:   (pid, did) => request('DELETE', `/api/projects/${pid}/documents/${did}`),
+
+  draftBrief:       (pid) => request('POST', `/api/projects/${pid}/draft-brief`),
+  refineBrief:      (pid, source) => request('POST', `/api/projects/${pid}/refine-brief`, { source }),
+  quickSpec:        (pid, prompt) => request('POST', `/api/projects/${pid}/quick-spec`, { prompt }),
 };

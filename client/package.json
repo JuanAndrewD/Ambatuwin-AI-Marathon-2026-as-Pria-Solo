@@ -1,7 +1,7 @@
 {
   "name": "cia-client",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "framer-motion": "^11.5.4",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.460.0",
     "marked": "^12.0.2",
     "mermaid": "^10.9.1",

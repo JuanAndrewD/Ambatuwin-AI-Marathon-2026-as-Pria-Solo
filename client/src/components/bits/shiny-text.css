@@ -1,0 +1,19 @@
+.bits-shiny {
+  background: linear-gradient(
+    110deg,
+    var(--text) 30%,
+    rgba(255, 255, 255, 0.95) 50%,
+    var(--text) 70%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation-name: shiny-sweep;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+@keyframes shiny-sweep {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}

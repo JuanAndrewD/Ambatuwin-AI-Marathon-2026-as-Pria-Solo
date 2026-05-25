@@ -1,0 +1,10 @@
+.bits-splittext { display: inline-block; }
+.bits-splittext-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.5em);
+  animation: splittext-rise 0.7s cubic-bezier(0.2, 0.65, 0.3, 1) forwards;
+}
+@keyframes splittext-rise {
+  to { opacity: 1; transform: none; }
+}
