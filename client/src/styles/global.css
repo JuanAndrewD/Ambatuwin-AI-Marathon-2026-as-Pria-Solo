@@ -1,0 +1,92 @@
+/* ------------------------------------------------------------------
+   Cloud Infrastructure Architect — design system
+   Inspiration: NotebookLM (3-pane), Claude (warm serif + soft cards),
+   OpenAI (deep neutrals + crisp typography), with React-Bits motion.
+   ------------------------------------------------------------------ */
+
+:root {
+  --bg-0: #0a0a0c;
+  --bg-1: #101015;
+  --bg-2: #15151c;
+  --bg-3: #1c1c25;
+  --bg-4: #232331;
+  --line: #2a2a37;
+  --line-strong: #3a3a4d;
+  --text: #ececf0;
+  --text-dim: #a1a1aa;
+  --text-faint: #71717a;
+
+  /* Claude-y warm accent */
+  --accent: #d97757;
+  --accent-soft: rgba(217, 119, 87, 0.12);
+  --accent-strong: #b85e3f;
+
+  /* NotebookLM-y purple/blue gradient */
+  --grad-1: #8b5cf6;
+  --grad-2: #6366f1;
+  --grad-3: #06b6d4;
+  --grad-4: #10b981;
+
+  --green: #10b981;
+  --red: #ef4444;
+  --yellow: #f59e0b;
+
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-sm: 8px;
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.25);
+
+  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-0);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+button { font-family: inherit; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 10px; border: 2px solid var(--bg-0); }
+::-webkit-scrollbar-thumb:hover { background: var(--bg-4); }
+
+/* Selection */
+::selection { background: var(--accent); color: #fff; }
+
+/* Utility */
+.shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.fade-in { animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.muted { color: var(--text-dim); }
+.faint { color: var(--text-faint); }
+.serif { font-family: var(--font-serif); font-weight: 400; }
+.mono  { font-family: var(--font-mono); }
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+}

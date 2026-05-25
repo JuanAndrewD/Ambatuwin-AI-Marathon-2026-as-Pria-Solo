@@ -1,12 +1,17 @@
 {
   "name": "cloud-infrastructure-architect",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Autonomous Technical Sales Consultant website that designs AWS cloud architectures from a natural-language requirements brief.",
+  "description": "Autonomous Technical Sales Consultant — fullstack AWS architecture designer powered by Chutes LLM.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "server": "node server.js",
+    "client": "npm --prefix client run dev",
+    "client:install": "npm --prefix client install",
+    "client:build": "npm --prefix client run build",
+    "build": "npm run client:install && npm run client:build",
+    "postinstall": "npm --prefix client install --no-audit --no-fund"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
