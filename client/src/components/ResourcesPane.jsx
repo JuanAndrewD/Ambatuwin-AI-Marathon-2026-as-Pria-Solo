@@ -67,7 +67,6 @@ export default function ResourcesPane({ catalog, project, onToggleService, onSel
                     </div>
                     <div className="rsub">{s.tagline}</div>
                   </div>
-                  <div className="rcheck">{isEnabled && '✓'}</div>
                 </div>
               );
             })}

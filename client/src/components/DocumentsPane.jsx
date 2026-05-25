@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileText, FileCode2, FileSpreadsheet, FilePlus2, Trash2, Pin, Eye, EyeOff, Sparkles } from 'lucide-react';
+import { FileText, FileCode2, FileSpreadsheet, FilePlus2, Trash2, Pin, Eye, EyeOff, Sparkles, RefreshCw } from 'lucide-react';
 
 const TYPE_ICON = {
   brief:    FileText,
@@ -20,6 +20,7 @@ export default function DocumentsPane({
   documents, activeDocId,
   onOpen, onCreate, onDelete, onToggleContext,
   onDraftBrief, isDrafting,
+  onRefresh, lastSyncedAt, isSyncing,
 }) {
   const [showNew, setShowNew] = useState(false);
 
@@ -52,7 +53,19 @@ export default function DocumentsPane({
         {isDrafting ? 'Drafting brief…' : 'Draft brief from chat'}
       </button>
 
-      <div className="side-section">In context · {documents.filter(d => d.included_in_context).length} of {documents.length}</div>
+      <div className="side-section">
+        <span>In context · {documents.filter(d => d.included_in_context).length} of {documents.length}</span>
+        {onRefresh && (
+          <button
+            className="docs-refresh"
+            onClick={onRefresh}
+            title={lastSyncedAt ? `Last synced ${formatRelative(lastSyncedAt)} · click to sync now` : 'Sync now'}
+            aria-label="Sync documents now"
+          >
+            <RefreshCw size={11} className={isSyncing ? 'spin' : ''} />
+          </button>
+        )}
+      </div>
       <div className="docs-list">
         {documents.map(d => {
           const Icon = TYPE_ICON[d.type] || TYPE_ICON.default;
@@ -144,4 +157,13 @@ function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function formatRelative(iso) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 5_000) return 'just now';
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  return `${Math.floor(diff / 3_600_000)}h ago`;
 }

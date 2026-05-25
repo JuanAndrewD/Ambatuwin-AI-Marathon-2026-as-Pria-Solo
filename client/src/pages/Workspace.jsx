@@ -39,6 +39,8 @@ export default function Workspace() {
   const [editingName, setEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
   const [error, setError] = useState(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [paneWidths, setPaneWidths] = useState(() => {
     try { return JSON.parse(localStorage.getItem(PANE_KEY) || ''); } catch {}
     return { left: 280, right: 360 };
@@ -265,19 +267,68 @@ export default function Workspace() {
   const openDocSlot = useRef(null);
   useEffect(() => { openDocSlot.current = openDoc; }, [openDoc]);
 
-  // When refreshing the active project (after chat / studio actions etc.),
-  // do NOT clobber an open document the user might be editing right now.
+  // When refreshing the active project (after chat / studio actions, polling,
+  // tab focus, etc.), do NOT clobber an open document if the user has unsaved
+  // edits in flight. If the editor is clean (saved or idle), adopt the server
+  // copy so external changes (Quick Spec, Refine, second-tab edit) flow in.
   function mergeActiveProject(prev, fresh) {
     if (!fresh) return prev;
     if (!prev || !openDocSlot.current) return fresh;
+    const slot = openDocSlot.current;
+    const localIsDirty = docDirtySlot.current; // ref so we read latest, not closure-captured
+    if (!localIsDirty) {
+      // Editor is clean — let server content win, and reflect it in the open
+      // editor view too (so the freshly refined / spec'd content appears).
+      const updated = (fresh.documents || []).find(d => d.id === slot.id);
+      if (updated) {
+        // Update the openDoc state so the editor visibly refreshes.
+        setOpenDoc(prevDoc => prevDoc ? { ...prevDoc, ...updated } : prevDoc);
+      }
+      return fresh;
+    }
+    // Editor is dirty — keep the user's in-flight content and name.
     return {
       ...fresh,
       documents: (fresh.documents || []).map(d =>
-        d.id === openDocSlot.current.id
-          ? { ...d, content: openDocSlot.current.content, name: openDocSlot.current.name }
+        d.id === slot.id
+          ? { ...d, content: slot.content, name: slot.name }
           : d
       ),
     };
+  }
+
+  // Track the latest dirty flag in a ref so mergeActiveProject reads the
+  // current value (it runs from intervals / async callbacks where closures
+  // would otherwise see a stale value).
+  const docDirtySlot = useRef(false);
+  useEffect(() => { docDirtySlot.current = docDirty; }, [docDirty]);
+
+  // Splice a fresh doc payload into the active project's local documents
+  // array (used by all three "create/modify a doc on the server" actions so
+  // the sidebar updates instantly, without waiting for the next poll).
+  async function manualRefresh() {
+    if (!activeId) return;
+    setIsSyncing(true);
+    try {
+      const [proj, list] = await Promise.all([api.getProject(activeId), api.listProjects()]);
+      setActiveProject(prev => mergeActiveProject(prev, proj.project));
+      setProjects(list.projects);
+      setLastSyncedAt(new Date().toISOString());
+    } catch (e) { setError(e.message); }
+    finally { setIsSyncing(false); }
+  }
+
+  function spliceDocLocally(serverDoc) {
+    if (!serverDoc) return;
+    setActiveProject(prev => {
+      if (!prev) return prev;
+      const docs = prev.documents || [];
+      const idx = docs.findIndex(d => d.id === serverDoc.id);
+      const nextDocs = idx >= 0
+        ? docs.map((d, i) => (i === idx ? { ...d, ...serverDoc } : d))
+        : [...docs, serverDoc];
+      return { ...prev, documents: nextDocs };
+    });
   }
 
   async function refineBriefFromEditor() {
@@ -286,12 +337,16 @@ export default function Workspace() {
     setRefineBusy(true);
     try {
       const { document } = await api.refineBrief(activeId, openDoc.content);
-      // Adopt the new content into the open editor view.
+      // Adopt the refined content into the open editor view.
       setOpenDoc(d => d ? { ...d, content: document.content, updated_at: document.updated_at } : document);
+      // Update the openDocSlot ref synchronously so the merge helper used by
+      // the polling loop sees the refined content (not the pre-refine notes).
+      openDocSlot.current = { ...(openDocSlot.current || {}), ...document };
       setSavingState('saved');
       setDocDirty(false);
-      const { project } = await api.getProject(activeId);
-      setActiveProject(prev => mergeActiveProject(prev, project));
+      // Splice the server doc into the project so the sidebar reflects the
+      // new size + updated_at right away — no need to wait for the next poll.
+      spliceDocLocally(document);
     } catch (e) { setError(e.message); }
     finally { setRefineBusy(false); }
   }
@@ -301,8 +356,8 @@ export default function Workspace() {
     setQuickSpecBusy(true);
     try {
       const { document } = await api.quickSpec(activeId, prompt);
-      const { project } = await api.getProject(activeId);
-      setActiveProject(prev => mergeActiveProject(prev, project));
+      // Optimistic insert so the new spec appears instantly in the Docs list.
+      spliceDocLocally(document);
       await refreshProjectsList();
       setShowQuickSpec(false);
       openDocument(document.id);
@@ -316,7 +371,9 @@ export default function Workspace() {
     setIsDraftingBrief(true);
     try {
       const { document } = await api.draftBrief(activeId);
-      await refreshActive();
+      // Optimistic insert/update — the brief doc id is stable per project, so
+      // this just refreshes its content + updated_at in place.
+      spliceDocLocally(document);
       openDocument(document.id);
     } catch (e) { setError(e.message); }
     finally { setIsDraftingBrief(false); }
@@ -344,6 +401,44 @@ export default function Workspace() {
     return () => document.body.classList.remove('workspace-mounted');
   }, []);
 
+  // ---- Auto-sync ----------------------------------------------------------
+  // Poll the active project every 4s so docs created server-side (Quick Spec,
+  // Draft Brief, AI refine) appear without manual refresh. Also refresh on
+  // tab focus and visibility change for instant catch-up after switching tabs.
+  useEffect(() => {
+    if (!activeId) return;
+    let alive = true;
+
+    async function quietRefresh() {
+      try {
+        setIsSyncing(true);
+        const [proj, list] = await Promise.all([api.getProject(activeId), api.listProjects()]);
+        if (!alive) return;
+        setActiveProject(prev => mergeActiveProject(prev, proj.project));
+        setProjects(list.projects);
+        setLastSyncedAt(new Date().toISOString());
+      } catch {
+        // Silent — polling shouldn't surface transient network errors.
+      } finally {
+        if (alive) setIsSyncing(false);
+      }
+    }
+
+    const POLL_MS = 4000;
+    const interval = setInterval(quietRefresh, POLL_MS);
+    function onFocus()       { quietRefresh(); }
+    function onVisibility()  { if (!document.hidden) quietRefresh(); }
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [activeId]);
+
   // ---- Studio handlers ----------------------------------------------------
 
   async function generateStudio(kind) {
@@ -358,7 +453,7 @@ export default function Workspace() {
         await api.designForProject(activeId, { brief: activeProject.brief });
         await refreshActive(); await refreshProjectsList();
       } else if (kind === 'diagram') {
-        await handleSendMessage('Show me the architecture diagram for this project as a Mermaid flowchart, grouped by edge / app / data / ops tiers.');
+        await handleSendMessage('Show me the architecture diagram for this project as a Mermaid flowchart, grouped by edge / app / data / ops tiers. IMPORTANT: emit each Mermaid statement on its own line inside a fenced ```mermaid block — never put the whole graph on a single line.');
       } else if (kind === 'bill') {
         await handleSendMessage('Give me a clean itemized monthly bill for the current architecture in markdown table form, including a budget delta if a budget was set.');
       } else if (kind === 'compliance') {
@@ -527,6 +622,9 @@ export default function Workspace() {
                   onToggleContext={toggleDocContext}
                   onDraftBrief={draftBriefFromHistory}
                   isDrafting={isDraftingBrief}
+                  onRefresh={manualRefresh}
+                  lastSyncedAt={lastSyncedAt}
+                  isSyncing={isSyncing}
                 />
               ) : <div className="muted" style={{ fontSize: 12, padding: 12 }}>Select or create a project to manage its documents.</div>
             )}

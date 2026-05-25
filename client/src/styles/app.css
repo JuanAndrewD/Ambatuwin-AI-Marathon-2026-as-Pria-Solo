@@ -225,8 +225,17 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
 
 /* ------- Chat (center pane) ------- */
 .chat-pane { background: var(--bg-0); display: flex; flex-direction: column; min-height: 0; }
-.chat-stream { flex: 1; overflow-y: auto; padding: 28px 12% 24px; }
-@media (max-width: 1400px) { .chat-stream { padding: 28px 8% 24px; } }
+.chat-stream {
+  flex: 1;
+  overflow-y: auto;
+  /* Cap the readable column at ~860px and centre it; this stops the conversation
+     from sprawling when the chat pane gets very wide, and from being cramped
+     when it's narrow. Replaces the percentage padding that fought the resizer. */
+  padding: 28px 32px 24px;
+  display: flex;
+  flex-direction: column;
+}
+.chat-stream > * { width: 100%; max-width: 860px; margin-left: auto; margin-right: auto; }
 @media (max-width: 1100px) { .chat-stream { padding: 20px 16px; } }
 
 .welcome {
@@ -308,7 +317,7 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
   color: var(--text);
 }
 .msg .content h1 { font-size: 26px; line-height: 1.2; margin: 18px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.msg .content h2 { font-size: 19px; line-height: 1.25; margin: 22px 0 8px; color: var(--accent); }
+.msg .content h2 { font-size: 19px; line-height: 1.25; margin: 22px 0 8px; }
 .msg .content h3 { font-size: 16px; line-height: 1.3; margin: 16px 0 6px; font-style: italic; }
 .msg .content h4 {
   font-size: 12px; margin: 14px 0 4px;
@@ -320,12 +329,14 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
 .msg .content em { font-style: italic; color: var(--text); }
 .msg .content ul, .msg .content ol { padding-left: 22px; margin: 8px 0; }
 .msg .content li { margin: 3px 0; }
-.msg .content li::marker { color: var(--accent); }
-.msg .content a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.msg .content li::marker { color: var(--text-dim); }
+.msg .content a { color: var(--text); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.msg .content a:hover { color: var(--accent); }
 .msg .content code {
   font-family: var(--font-mono); font-size: 12.5px;
   background: var(--bg-2); border: 1px solid var(--line);
   padding: 1px 6px; border-radius: 4px;
+  color: var(--text);
 }
 .msg .content pre {
   background: var(--bg-2); border: 1px solid var(--line);
@@ -345,7 +356,7 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
 .msg .content th, .msg .content td {
   padding: 7px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top;
 }
-.msg .content th { background: var(--bg-2); color: var(--text-dim); font-weight: 600; }
+.msg .content th { background: var(--bg-2); color: var(--text); font-weight: 600; }
 .msg .content td:last-child, .msg .content th:last-child { text-align: right; }
 .msg .content .mermaid {
   background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px;
@@ -367,10 +378,10 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
 
 /* Composer */
 .composer-wrap {
-  padding: 12px 12% 18px;
+  padding: 12px 32px 18px;
   background: linear-gradient(to top, var(--bg-0) 60%, transparent);
 }
-@media (max-width: 1400px) { .composer-wrap { padding: 12px 8% 18px; } }
+.composer-wrap .composer { width: 100%; max-width: 860px; margin: 0 auto; }
 @media (max-width: 1100px) { .composer-wrap { padding: 10px 16px 14px; } }
 .composer {
   background: var(--bg-2);
@@ -402,34 +413,76 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
 
 /* ------- Studio (right pane) ------- */
 .studio-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;
+  display: grid;
+  /* Auto-fit columns so cards reflow when the pane is resized narrow.
+     At 280px+ → 2 columns; below ~260px → 1 column. */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
 }
 .studio-card {
   position: relative;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 12px;
   cursor: pointer;
-  transition: all 0.18s ease;
-  display: flex; align-items: center; gap: 10px;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   overflow: hidden;
+  min-width: 0;
+  text-align: left;
+  /* Force readable foreground regardless of UA button defaults */
+  color: var(--text);
+  font: inherit;
+  line-height: 1.3;
 }
 .studio-card::before {
   content: ''; position: absolute; inset: 0;
   background: linear-gradient(135deg, transparent, var(--accent-soft));
   opacity: 0; transition: opacity 0.2s ease;
+  pointer-events: none;
 }
-.studio-card:hover { transform: translateY(-1px); border-color: var(--line-strong); }
+.studio-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  background: var(--bg-3);
+}
 .studio-card:hover::before { opacity: 1; }
+
 .studio-card .scicon {
-  width: 32px; height: 32px; border-radius: 8px;
-  background: var(--bg-3); display: grid; place-items: center;
-  color: var(--accent); position: relative; z-index: 1; flex: none;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  display: grid; place-items: center;
+  color: var(--accent);
+  position: relative; z-index: 1;
+  flex: none;
+  transition: background 0.18s ease;
 }
-.studio-card .scbody { position: relative; z-index: 1; min-width: 0; }
-.studio-card .scname { font-size: 12.5px; font-weight: 600; line-height: 1.2; }
-.studio-card .scsub { font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+.studio-card:hover .scicon { background: rgba(217, 119, 87, 0.16); }
+
+.studio-card .scbody {
+  position: relative; z-index: 1;
+  min-width: 0;
+  flex: 1;
+}
+.studio-card .scname {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);              /* ← was inheriting button default; now bright */
+  word-break: break-word;
+}
+.studio-card .scsub {
+  font-size: 10.5px;
+  color: var(--text-dim);          /* slightly brighter than --text-faint */
+  margin-top: 3px;
+  line-height: 1.4;
+  word-break: break-word;
+}
 .studio-card.busy { opacity: 0.6; pointer-events: none; }
 
 .studio-output {
@@ -794,3 +847,18 @@ body.resizing-h * { cursor: col-resize !important; }
 .qs-suggest-chip:hover:not(:disabled) {
   color: var(--accent); border-color: var(--accent); background: rgba(217,119,87,0.06);
 }
+
+
+/* Sidebar refresh affordance — reuses .side-section's flex layout */
+.docs-refresh {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.15s ease;
+}
+.docs-refresh:hover { color: var(--accent); border-color: var(--line); }
