@@ -1,5 +1,11 @@
 # ☁️ The Cloud Infrastructure Architect
 
+> 🌐 **Live demo:** <https://ambatuwin-ai-marathon-2026-as-pria-solo.onrender.com/>
+>
+> Deployed on Render (free tier — first request after idle takes ~30 s to
+> wake). Powered by Chutes LLM. State persists between requests on the same
+> instance; full reset on redeploy.
+
 An **Autonomous Technical Sales Consultant** website that takes a high-level
 requirements brief and autonomously navigates a real AWS catalog to design a
 complete, valid, and quoted enterprise deployment.
