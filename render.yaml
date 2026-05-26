@@ -1,0 +1,38 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# Drop this file in the repo root, push to GitHub, then on Render:
+#   New → Blueprint → connect this repo → review → Apply.
+# Render will create the web service and the persistent disk in one shot.
+
+services:
+  - type: web
+    name: cloud-architect
+    runtime: node
+    plan: free                    # upgrade to "starter" ($7/mo) for no idle spin-down + persistent disk
+    region: singapore             # closest to your KL/SG demo audience; pick another from render.com docs
+
+    buildCommand: npm install && npm run client:build
+    startCommand: npm start
+
+    healthCheckPath: /api/catalog
+    autoDeploy: true              # redeploy on every push to the chosen branch
+
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 10000              # Render injects $PORT; our server.js already reads it
+      - key: CHUTES_MODEL
+        value: zai-org/GLM-5.1-TEE
+      - key: Chutes_api_key
+        sync: false               # set this manually in the Render dashboard so the secret isn't committed
+
+    # NOTE: Render's free plan does NOT support persistent disks. If you stay
+    # on the free tier, data/projects.json will reset on every redeploy. To
+    # keep state across deploys, upgrade to "starter" and uncomment the disk
+    # block below — it mounts the data/ folder onto a 1 GB SSD.
+    #
+    # disk:
+    #   name: cia-data
+    #   mountPath: /opt/render/project/src/data
+    #   sizeGB: 1

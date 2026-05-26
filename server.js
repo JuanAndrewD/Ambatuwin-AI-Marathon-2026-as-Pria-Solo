@@ -469,8 +469,15 @@ app.get(/^(?!\/api\/).*/, (_req, res, next) => {
   next();
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`☁️  Cloud Infrastructure Architect running at http://localhost:${PORT}`);
-  console.log(`    Serving static from: ${staticDir}`);
-});
+// Only bind a port when run as the main module (e.g. `npm start` locally).
+// On Vercel, server.js is required from api/index.js and the platform
+// dispatches requests directly to the exported Express app.
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`☁️  Cloud Infrastructure Architect running at http://localhost:${PORT}`);
+    console.log(`    Serving static from: ${staticDir}`);
+  });
+}
+
+module.exports = app;
