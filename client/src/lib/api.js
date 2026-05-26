@@ -36,4 +36,7 @@ export const api = {
   draftBrief:       (pid) => request('POST', `/api/projects/${pid}/draft-brief`),
   refineBrief:      (pid, source) => request('POST', `/api/projects/${pid}/refine-brief`, { source }),
   quickSpec:        (pid, prompt) => request('POST', `/api/projects/${pid}/quick-spec`, { prompt }),
+  // Convenience: keep the project's brief field + the brief document content
+  // in sync. Used when seeding a placeholder brief before the very first plan.
+  updateDocumentBriefMirror: (pid, content) => request('PATCH', `/api/projects/${pid}`, { brief: content }),
 };

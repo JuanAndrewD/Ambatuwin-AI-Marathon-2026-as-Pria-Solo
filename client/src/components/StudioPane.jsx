@@ -84,9 +84,22 @@ export default function StudioPane({ project, plan, isGenerating, onGenerate, co
                   <div className="kpi-l">Region</div>
                   <div className="kpi-v" style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{plan.region.code}</div>
                 </div>
-                <div className={`kpi-card ${complianceFail ? 'red' : 'green'}`}>
-                  <div className="kpi-l">Compliance</div>
-                  <div className="kpi-v">{compliancePass}/{compliancePass + complianceFail} ✓</div>
+                <div
+                  className={`kpi-card ${complianceFail ? 'red' : compliancePass > 0 ? 'green' : ''}`}
+                  title={
+                    compliancePass + complianceFail === 0
+                      ? 'No data-residency frameworks were inferred from this brief.'
+                      : compliancePass > 0 && !complianceFail
+                        ? `Region ${plan.region.code} natively attests every framework requested.`
+                        : `Region ${plan.region.code} fails ${complianceFail} of ${compliancePass + complianceFail} requested frameworks. Click "Compliance audit" for a qualitative review.`
+                  }
+                >
+                  <div className="kpi-l">Residency</div>
+                  <div className="kpi-v">
+                    {compliancePass + complianceFail === 0
+                      ? <span style={{ color: 'var(--text-faint)' }}>—</span>
+                      : <>{compliancePass}/{compliancePass + complianceFail} {complianceFail ? '✗' : '✓'}</>}
+                  </div>
                 </div>
               </div>
 

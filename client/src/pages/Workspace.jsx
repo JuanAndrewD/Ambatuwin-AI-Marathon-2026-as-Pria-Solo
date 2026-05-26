@@ -446,24 +446,70 @@ export default function Workspace() {
     setIsGenerating(true);
     try {
       if (kind === 'full-plan') {
-        if (!activeProject.brief?.trim()) {
-          await handleSendMessage('Please draft a high-level requirements brief based on our project name and what we have discussed so far, then I will use it to generate the deployment plan.');
-          return;
+        // The brief is the source of truth for the design pipeline. If it's
+        // empty, synthesise one from the chat history (or seed it from the
+        // project name) so the click reliably produces a plan instead of
+        // bouncing back into "please draft a brief first".
+        let briefText = (activeProject.brief || '').trim();
+
+        if (!briefText) {
+          if ((activeProject.chat || []).length === 0) {
+            // No conversation yet either — seed a minimal placeholder brief
+            // so the design pipeline can at least make a starting proposal.
+            briefText = `# ${activeProject.name}\n\nInitial deployment in ${activeProject.region}. Workload details to be refined; the architect should propose a sensible default architecture and call out assumptions.`;
+            await api.updateDocumentBriefMirror(activeId, briefText);
+          } else {
+            // We have chat history — draft a real brief from it.
+            try {
+              const { document } = await api.draftBrief(activeId);
+              spliceDocLocally(document);
+              briefText = document.content;
+            } catch (e) {
+              setError('Could not draft a brief from chat: ' + e.message);
+              return;
+            }
+          }
         }
-        await api.designForProject(activeId, { brief: activeProject.brief });
-        await refreshActive(); await refreshProjectsList();
+
+        // Now run the deterministic design pipeline.
+        const { result } = await api.designForProject(activeId, { brief: briefText });
+        // Adopt the new plan into local state immediately so the Studio
+        // KPIs and "View plan in chat" become available without waiting
+        // for the next poll.
+        setActiveProject(prev => prev ? { ...prev, brief: briefText, last_plan: result } : prev);
+        await refreshProjectsList();
       } else if (kind === 'diagram') {
         await handleSendMessage('Show me the architecture diagram for this project as a Mermaid flowchart, grouped by edge / app / data / ops tiers. IMPORTANT: emit each Mermaid statement on its own line inside a fenced ```mermaid block — never put the whole graph on a single line.');
       } else if (kind === 'bill') {
+        if (!activeProject.last_plan) {
+          setError('No plan yet — click "Generate plan" first, then ask for the itemized bill.');
+          return;
+        }
         await handleSendMessage('Give me a clean itemized monthly bill for the current architecture in markdown table form, including a budget delta if a budget was set.');
       } else if (kind === 'compliance') {
-        await handleSendMessage('Audit the compliance posture of this architecture (data residency, encryption, network isolation, IAM). Use the catalog data and call out anything that fails.');
+        if (!activeProject.last_plan) {
+          setError('No plan yet — click "Generate plan" first, then run the compliance audit.');
+          return;
+        }
+        await handleSendMessage('Audit the compliance posture of the generated plan (data residency, encryption, network isolation, IAM). Use the catalog data and call out anything that fails. Reference the components by their `id` from the last plan.');
       } else if (kind === 'terraform') {
+        if (!activeProject.last_plan) {
+          setError('No plan yet — click "Generate plan" first, then ask for the Terraform skeleton.');
+          return;
+        }
         await handleSendMessage('Generate a Terraform skeleton (HCL, fenced) for the components in the current plan. Do not include secrets, and keep it idiomatic.');
       } else if (kind === 'proposal') {
+        if (!activeProject.last_plan) {
+          setError('No plan yet — click "Generate plan" first, then ask for the sales proposal.');
+          return;
+        }
         await handleSendMessage('Write a 1-page sales proposal for the client based on this architecture: executive summary, what we are delivering, monthly cost, compliance posture, and next steps. Tone: confident sales engineer.');
       }
-    } catch (e) { setError(e.message); }
+    } catch (e) {
+      // The design endpoint usually fails because the LLM took too long or
+      // returned malformed JSON. Surface the message instead of swallowing.
+      setError(e.message || 'Plan generation failed');
+    }
     finally { setIsGenerating(false); }
   }
 
