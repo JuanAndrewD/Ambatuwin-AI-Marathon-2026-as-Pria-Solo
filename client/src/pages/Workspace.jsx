@@ -281,8 +281,16 @@ export default function Workspace() {
   }
 
   function changeOpenDoc(patch) {
-    if (!openDoc) return;
-    setOpenDoc(d => ({ ...d, ...patch }));
+    // Base the next value on the ref (the latest committed edit), not on the
+    // closure-captured `openDoc`, so rapid edits/pastes never read a stale
+    // snapshot. Keep the ref + dirty flag in lockstep SYNCHRONOUSLY so the
+    // debounced save below always sees the most recent content.
+    const base = openDocSlot.current || openDoc;
+    if (!base) return;
+    const next = { ...base, ...patch };
+    openDocSlot.current = next;
+    docDirtySlot.current = true;
+    setOpenDoc(next);
     setDocDirty(true);
     setSavingState('dirty');
 
@@ -292,37 +300,45 @@ export default function Workspace() {
   }
 
   async function saveOpenDoc() {
-    if (!openDoc || !activeId) return;
+    if (!activeId) return;
+    // Read the LATEST document from the ref rather than the stale closure.
+    // This is the fix for edits (especially pastes) being dropped: the
+    // debounced timer used to fire a saveOpenDoc that closed over an
+    // out-of-date `openDoc`, so the final edit was never persisted.
+    const current = openDocSlot.current;
+    if (!current) return;
     if (autosaveRef.current) { clearTimeout(autosaveRef.current); autosaveRef.current = null; }
-    const snapshot = { name: openDoc.name, content: openDoc.content };
+    const snapshot = { name: current.name, content: current.content };
     setSavingState('saving');
     try {
-      const { document } = await api.updateDocument(activeId, openDoc.id, snapshot);
+      const { document } = await api.updateDocument(activeId, current.id, snapshot);
       // Reconcile carefully: keep the user's local edits if they kept typing
       // during the round-trip. Only adopt server metadata that doesn't
       // conflict with active typing. This was the cause of the duplicated-
-      // character bug ("# # heading" instead of "# heading").
-      let stillAhead = false;
-      setOpenDoc(d => {
-        if (!d) return document;
-        stillAhead = d.content !== snapshot.content || d.name !== snapshot.name;
-        return {
-          ...d,
-          id: document.id,
-          type: document.type,
-          pinned: document.pinned,
-          included_in_context: document.included_in_context,
-          updated_at: document.updated_at,
-          content: stillAhead ? d.content : document.content,
-          name: stillAhead ? d.name : document.name,
-        };
-      });
+      // character bug ("# # heading" instead of "# heading"). We compare
+      // against the ref (latest), not the closure-captured value.
+      const latest = openDocSlot.current || current;
+      const stillAhead = latest.content !== snapshot.content || latest.name !== snapshot.name;
+      const merged = {
+        ...latest,
+        id: document.id,
+        type: document.type,
+        pinned: document.pinned,
+        included_in_context: document.included_in_context,
+        updated_at: document.updated_at,
+        content: stillAhead ? latest.content : document.content,
+        name: stillAhead ? latest.name : document.name,
+      };
+      openDocSlot.current = merged;
+      setOpenDoc(d => (d ? merged : document));
       if (stillAhead) {
+        docDirtySlot.current = true;
         setDocDirty(true);
         setSavingState('dirty');
         if (autosaveRef.current) clearTimeout(autosaveRef.current);
         autosaveRef.current = setTimeout(() => { saveOpenDoc(); }, AUTOSAVE_MS);
       } else {
+        docDirtySlot.current = false;
         setDocDirty(false);
         setSavingState('saved');
       }
