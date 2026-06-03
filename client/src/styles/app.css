@@ -600,6 +600,22 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
   font-family: var(--font-mono);
 }
 
+.upload-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: var(--text-dim);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+}
+.upload-status .spin { animation: spin 0.8s linear infinite; flex-shrink: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* Drag overlay */
 .chat-pane.dragover .drop-overlay { display: grid; }
 .drop-overlay {

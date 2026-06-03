@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, Sparkles, Trash2, Paperclip, X, FileText, ChevronDown } from 'lucide-react';
+import { Send, Sparkles, Trash2, Paperclip, X, FileText, ChevronDown, Loader2 } from 'lucide-react';
 import { renderMarkdown, postProcessMermaid } from '../lib/markdown';
+import {
+  extractFile, isAllowed, HINT_EXT,
+  MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FILES,
+} from '../lib/extract';
 import TypingDots from './TypingDots';
 import Aurora from './Aurora';
 
@@ -12,15 +16,12 @@ const SUGGESTIONS = [
   'Suggest an architecture under USD $4,000 / month',
 ];
 
-// Allowed text-like extensions for attachments. We deliberately reject binaries.
-const ALLOWED_EXT = ['.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.log', '.tf', '.hcl', '.env.example', '.toml', '.ini'];
-const MAX_FILE_BYTES = 200_000;        // 200 KB per file
-const MAX_TOTAL_BYTES = 500_000;       // 500 KB combined
-const MAX_FILES = 5;
-
-function isAllowed(name) {
-  const lower = name.toLowerCase();
-  return ALLOWED_EXT.some(ext => lower.endsWith(ext));
+const MB = 1024 * 1024;
+function fmtBytes(b) {
+  return b >= MB ? `${(b / MB).toFixed(b >= 10 * MB ? 0 : 1)} MB` : `${(b / 1024).toFixed(1)} KB`;
+}
+function fmtLimit(b) {
+  return b >= MB ? `${Math.round(b / MB)} MB` : `${Math.round(b / 1024)} KB`;
 }
 
 export default function ChatPane({ project, regions, isThinking, onSend, onClearChat, onUpdateProject }) {
@@ -28,6 +29,7 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
   const [attachments, setAttachments] = useState([]); // [{ name, bytes, content }]
   const [dragOver, setDragOver] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [extracting, setExtracting] = useState(false);
   const streamRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -66,20 +68,36 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
     if (!incoming.length) return;
     const errors = [];
     const accepted = [];
+    let count = attachments.length;
     let totalBytes = attachments.reduce((s, a) => s + a.bytes, 0);
+
+    // Pre-validate cheap checks (count, extension, size) before any extraction.
+    const toExtract = [];
     for (const f of incoming) {
-      if (attachments.length + accepted.length >= MAX_FILES) { errors.push(`max ${MAX_FILES} files; "${f.name}" skipped`); continue; }
-      if (!isAllowed(f.name)) { errors.push(`"${f.name}" — only text formats allowed (${ALLOWED_EXT.slice(0,6).join(', ')}…)`); continue; }
-      if (f.size > MAX_FILE_BYTES) { errors.push(`"${f.name}" exceeds 200 KB`); continue; }
-      if (totalBytes + f.size > MAX_TOTAL_BYTES) { errors.push(`"${f.name}" would exceed 500 KB total`); continue; }
+      if (count + toExtract.length >= MAX_FILES) { errors.push(`max ${MAX_FILES} files; "${f.name}" skipped`); continue; }
+      if (!isAllowed(f.name)) { errors.push(`"${f.name}" — unsupported type. Allowed: ${HINT_EXT.join(', ')}…`); continue; }
+      if (f.size > MAX_FILE_BYTES) { errors.push(`"${f.name}" exceeds ${fmtLimit(MAX_FILE_BYTES)}`); continue; }
+      if (totalBytes + f.size > MAX_TOTAL_BYTES) { errors.push(`"${f.name}" would exceed ${fmtLimit(MAX_TOTAL_BYTES)} total`); continue; }
+      totalBytes += f.size;
+      toExtract.push(f);
+    }
+
+    if (toExtract.length) {
+      setExtracting(true);
       try {
-        const text = await f.text();
-        accepted.push({ name: f.name, bytes: f.size, content: text });
-        totalBytes += f.size;
-      } catch (err) {
-        errors.push(`"${f.name}": ${err.message}`);
+        for (const f of toExtract) {
+          try {
+            const att = await extractFile(f); // { name, bytes, content }
+            accepted.push(att);
+          } catch (err) {
+            errors.push(`"${f.name}": ${err.message}`);
+          }
+        }
+      } finally {
+        setExtracting(false);
       }
     }
+
     if (accepted.length) setAttachments((a) => [...a, ...accepted]);
     if (errors.length) setUploadError(errors.join(' · '));
   }
@@ -90,7 +108,7 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
 
   function submit() {
     const value = input.trim();
-    if (!value || isThinking || !project) return;
+    if (!value || isThinking || !project || extracting) return;
     setInput('');
     onSend(value, attachments);
     setAttachments([]);
@@ -167,10 +185,15 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
                 <span key={i} className="attach-chip">
                   <FileText size={11} />
                   {a.name}
-                  <span className="attach-size">{(a.bytes / 1024).toFixed(1)} KB</span>
+                  <span className="attach-size">{fmtBytes(a.bytes)}</span>
                   <button onClick={() => removeAttachment(i)} title="Remove"><X size={11} /></button>
                 </span>
               ))}
+            </div>
+          )}
+          {extracting && (
+            <div className="upload-status">
+              <Loader2 size={12} className="spin" /> Extracting text from document…
             </div>
           )}
           {uploadError && (
@@ -190,8 +213,8 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
               <button
                 className="btn tiny ghost"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={!project || attachments.length >= MAX_FILES}
-                title={`Attach files (max ${MAX_FILES}, 200 KB each, 500 KB total)`}
+                disabled={!project || extracting || attachments.length >= MAX_FILES}
+                title={`Attach docs (PDF, DOCX, PPTX, text) — max ${MAX_FILES}, ${fmtLimit(MAX_FILE_BYTES)} each`}
               >
                 <Paperclip size={11} /> Attach
               </button>
@@ -199,7 +222,7 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept={ALLOWED_EXT.join(',')}
+                accept=".pdf,.docx,.pptx,.md,.markdown,.txt,.text,.json,.yaml,.yml,.csv,.tsv,.log,.tf,.hcl,.toml,.ini,.xml,.html,.htm,.rtf"
                 style={{ display: 'none' }}
                 onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
               />
@@ -235,7 +258,7 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
           <div className="drop-overlay-inner">
             <Paperclip size={36} />
             <div>Drop your files to attach</div>
-            <small>{ALLOWED_EXT.slice(0, 8).join(' · ')} · max 200 KB each</small>
+            <small>PDF · DOCX · PPTX · {HINT_EXT.filter(e => !['.pdf', '.docx', '.pptx'].includes(e)).join(' · ')} · max {fmtLimit(MAX_FILE_BYTES)} each</small>
           </div>
         </div>
       )}
@@ -302,7 +325,7 @@ function Message({ role, content, error, attachments }) {
                 <span key={i} className="attach-chip readonly">
                   <FileText size={11} />
                   {a.name}
-                  <span className="attach-size">{(a.bytes / 1024).toFixed(1)} KB</span>
+                  <span className="attach-size">{fmtBytes(a.bytes)}</span>
                 </span>
               ))}
             </div>

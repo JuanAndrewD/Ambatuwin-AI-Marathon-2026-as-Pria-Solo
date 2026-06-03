@@ -32,7 +32,9 @@ const { router: githubRoutes, requireUserWithToken } = require('./lib/routes-git
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '1mb' }));
+// Raised from 1mb: chat attachments now carry text extracted from large PDFs,
+// DOCX and PPTX documents on the client, which can be several MB of text.
+app.use(express.json({ limit: '16mb' }));
 
 // ---- Session (PostgreSQL-backed cookie sessions) ---------------------------
 const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production'
@@ -565,19 +567,23 @@ app.post('/api/projects/:id/chat', requireAuth, uploadRateLimit, async (req, res
   if (!message || !String(message).trim()) return res.status(400).json({ error: 'message is required' });
 
   // Validate attachments shape and size on the server even though the client
-  // also caps them. attachments: [{ name, bytes, content }]
+  // also caps them. attachments: [{ name, bytes, content }] where `content` is
+  // text extracted client-side from the source document (PDF/DOCX/PPTX/text).
+  // `bytes` is the original file size; we cap the *extracted text* separately.
   const safeAttachments = [];
   if (Array.isArray(attachments)) {
     if (attachments.length > 5) return res.status(400).json({ error: 'too many attachments (max 5 per message)' });
-    let totalBytes = 0;
+    let totalChars = 0;
     for (const a of attachments) {
       const name = String(a?.name || 'file').slice(0, 200);
       const content = String(a?.content || '');
-      const bytes = Buffer.byteLength(content, 'utf8');
-      if (bytes > 200_000) return res.status(413).json({ error: `attachment "${name}" exceeds 200 KB` });
-      totalBytes += bytes;
-      if (totalBytes > 500_000) return res.status(413).json({ error: 'attachments exceed 500 KB total' });
-      safeAttachments.push({ name, bytes, content });
+      const textBytes = Buffer.byteLength(content, 'utf8');
+      const origBytes = Number.isFinite(a?.bytes) ? Number(a.bytes) : textBytes;
+      if (origBytes > 50 * 1024 * 1024) return res.status(413).json({ error: `attachment "${name}" exceeds 50 MB` });
+      if (textBytes > 4 * 1024 * 1024) return res.status(413).json({ error: `extracted text from "${name}" exceeds 4 MB` });
+      totalChars += textBytes;
+      if (totalChars > 10 * 1024 * 1024) return res.status(413).json({ error: 'extracted attachment text exceeds 10 MB total' });
+      safeAttachments.push({ name, bytes: origBytes, content });
     }
   }
 
