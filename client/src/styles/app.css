@@ -862,3 +862,155 @@ body.resizing-h * { cursor: col-resize !important; }
   transition: all 0.15s ease;
 }
 .docs-refresh:hover { color: var(--accent); border-color: var(--line); }
+
+/* ============================================================
+   Auth: sign-in screen
+   ============================================================ */
+.signin-screen {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(139, 92, 246, 0.16), transparent 60%),
+    var(--bg-0, #0b0b0f);
+  padding: 24px;
+  z-index: 100;
+}
+.signin-card {
+  width: 100%; max-width: 440px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+.signin-mark {
+  width: 52px; height: 52px; border-radius: 14px;
+  margin: 0 auto 16px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--grad-1), var(--grad-3));
+  box-shadow: 0 0 26px rgba(139, 92, 246, 0.4);
+}
+.signin-card h1 {
+  font-size: 22px; margin: 0 0 8px;
+  font-family: var(--font-serif, inherit); font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.signin-card .muted { font-size: 13px; line-height: 1.5; margin: 0 0 20px; }
+.signin-points {
+  list-style: none; padding: 0; margin: 0 0 22px;
+  text-align: left; display: flex; flex-direction: column; gap: 10px;
+}
+.signin-points li {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: var(--text);
+}
+.signin-points li svg { color: var(--accent); flex: none; }
+.signin-btn { width: 100%; justify-content: center; padding: 11px; font-size: 14px; }
+.signin-warn {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px; font-size: 12px;
+  text-align: left; color: var(--text-dim);
+}
+.signin-warn svg { color: var(--amber, #f5a623); flex: none; margin-top: 1px; }
+.signin-warn code {
+  background: var(--bg-3); padding: 1px 5px; border-radius: 4px;
+  font-size: 11px; color: var(--text);
+}
+.signin-error {
+  margin-top: 14px; color: var(--red); font-size: 12px;
+}
+.signin-mode { margin-top: 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* ============================================================
+   Topbar: user chip + menu
+   ============================================================ */
+.user-menu-wrap { position: relative; display: inline-flex; }
+.user-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: none; background: transparent; cursor: pointer;
+  border-radius: 50%;
+}
+.user-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  object-fit: cover; display: block;
+}
+.user-avatar.fallback {
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--grad-1), var(--grad-3));
+  color: #fff; font-size: 12px; font-weight: 600;
+}
+.user-menu-backdrop { position: fixed; inset: 0; z-index: 40; }
+.user-menu {
+  position: absolute; top: 38px; right: 0; z-index: 41;
+  width: 220px;
+  background: var(--bg-1); border: 1px solid var(--line);
+  border-radius: 10px; padding: 6px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+.user-menu-head { padding: 8px 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.user-menu-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.user-menu-login { font-size: 12px; }
+.user-menu-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; padding: 8px 10px; border-radius: 7px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text); font-size: 13px; text-align: left;
+}
+.user-menu-item:hover { background: var(--bg-3); }
+.user-menu-item svg { color: var(--text-dim); }
+
+/* ============================================================
+   GitHub modal
+   ============================================================ */
+.gh-modal { max-width: 520px; }
+.gh-current {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--bg-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 12px; font-size: 12px;
+  margin-bottom: 14px; color: var(--text);
+}
+.gh-current svg { color: var(--accent); flex: none; }
+.gh-current .gh-branch,
+.gh-current .gh-priv {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--text-dim); font-size: 11px;
+  background: var(--bg-3); padding: 2px 7px; border-radius: 20px;
+}
+.gh-current .gh-open { margin-left: auto; color: var(--text-dim); display: inline-flex; }
+.gh-current .gh-open:hover { color: var(--accent); }
+
+.gh-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.gh-tab {
+  padding: 8px 14px; background: transparent; border: none;
+  border-bottom: 2px solid transparent; cursor: pointer;
+  color: var(--text-dim); font-size: 13px;
+}
+.gh-tab:hover:not(:disabled) { color: var(--text); }
+.gh-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.gh-tab:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.gh-section { display: flex; flex-direction: column; }
+.gh-row-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.gh-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-dim); margin-bottom: 5px; display: block;
+}
+.gh-check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); cursor: pointer; }
+.gh-check input { width: auto; }
+.gh-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+
+.gh-result {
+  margin-top: 14px; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+}
+.gh-result-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+.gh-result-head svg { color: var(--green, #3fb950); }
+.gh-result-head a { color: var(--accent); display: inline-flex; align-items: center; gap: 3px; }
+.gh-result ul { margin: 8px 0 0; padding-left: 18px; }
+.gh-result li { font-size: 12px; color: var(--text-dim); font-family: var(--font-mono, monospace); }
+
+.gh-error { margin-top: 14px; color: var(--red); font-size: 12px; }
+.gh-notice { margin-top: 14px; color: var(--green, #3fb950); font-size: 12px; display: flex; align-items: center; gap: 6px; }

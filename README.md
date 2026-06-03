@@ -3,8 +3,8 @@
 > 🌐 **Live demo:** <https://ambatuwin-ai-marathon-2026-as-pria-solo.onrender.com/>
 >
 > Deployed on Render (free tier — first request after idle takes ~30 s to
-> wake). Powered by Chutes LLM. State persists between requests on the same
-> instance; full reset on redeploy.
+> wake). Powered by Chutes LLM. Sign in with GitHub; projects persist in
+> PostgreSQL across redeploys.
 
 An **Autonomous Technical Sales Consultant** website that takes a high-level
 requirements brief and autonomously navigates a real AWS catalog to design a
@@ -55,6 +55,11 @@ never sees a price.
 
 ### Workspace highlights
 
+- **Accounts** — sign in with GitHub. Each user gets an isolated session and
+  their own private set of projects, stored in PostgreSQL.
+- **GitHub sync** — connect an existing repo or create a new one from the app,
+  then push every project document (and the generated plan) straight to the
+  repo as markdown via the Git Trees API — no zip, no local git.
 - **Projects** — name, organise, and switch between architecture engagements. Each project tracks its own brief, region, allowed services, chat history, generated plans, and document set.
 - **Docs** — every project has a pinned **Requirements brief** and any number of additional markdown / Terraform / notes files. Toggle the "eye" on each doc to inject it into chat context. Reference docs in chat with `#docname` (Kiro-style `#File`).
 - **Resources** — every AWS service is a togglable source. The architect is locked to the enabled subset.
@@ -77,7 +82,9 @@ never sees a price.
 | Markdown | [marked](https://marked.js.org) |
 | Diagrams | [Mermaid](https://mermaid.js.org) (dark theme, with a deterministic single-line → multi-line normaliser) |
 | Pricing | Local catalog `data/aws-catalog.json` (USD on-demand list, 730 h / month) |
-| Persistence | JSON file at `data/projects.json` |
+| Persistence | PostgreSQL (`users` + `projects` tables) via `pg` |
+| Auth | GitHub OAuth (cookie sessions, `express-session` + `connect-pg-simple`) |
+| Repo sync | GitHub Git Data (Trees) API — push markdown without zip or local git |
 
 ---
 
@@ -85,9 +92,10 @@ never sees a price.
 
 The system is a three-layer agent: **LLM** for natural-language understanding
 and generation, **deterministic guardrails** for everything that must be
-reproducible (pricing, region availability, compliance), and **file-backed
-state** for projects, documents, and conversation history. The frontend is a
-single-page React app talking to an Express REST API.
+reproducible (pricing, region availability, compliance), and **PostgreSQL-backed
+state** for accounts, projects, documents, and conversation history. Users sign
+in with **GitHub** and every project is scoped to their database row. The
+frontend is a single-page React app talking to an Express REST API.
 
 ### High-level diagram
 
@@ -105,7 +113,7 @@ single-page React app talking to an Express REST API.
 │                                                                                 │
 │   ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐         │
 │   │ projects.js      │    │  rate-limit.js   │    │ catalog-api.js   │         │
-│   │ (file-backed CRUD)│    │ (sliding window) │    │ (public summary) │         │
+│   │ (PG, user-scoped)│    │ (sliding window) │    │ (public summary) │         │
 │   └────────┬─────────┘    └──────────────────┘    └─────────┬────────┘         │
 │            │                                                 │                  │
 │            ▼                                                 │                  │
@@ -136,9 +144,9 @@ single-page React app talking to an Express REST API.
 │   └──────────────────┘                                                          │
 │                                                                                 │
 │   ┌──────────────────┐               ┌──────────────────┐                      │
-│   │  projects.js     │ ◄── reads/ ───┤ data/projects.json (per-user state:    │
-│   │  (CRUD, append-  │     writes    │  projects, chat, docs, last_plan)      │
-│   │  only chat log)  │               └──────────────────┘                      │
+│   │  projects.js     │ ◄── reads/ ───┤ PostgreSQL (per-user state via FK:      │
+│   │  users.js · db.js│     writes    │  users, projects, chat, docs, plan)    │
+│   │  (PG, user-scoped)│              └──────────────────┘                      │
 │   └──────────────────┘                                                          │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -235,86 +243,135 @@ The LLM never sees a price. After the architecture proposal arrives,
 The result is a `priced.items[]` array with deterministic numbers. Run the
 same brief through twice and you get the same total to the cent.
 
-### Personalised directory: file-backed persistence
+### Accounts, sessions, and PostgreSQL persistence
 
-There is no SQL. State lives in two JSON files under `data/`:
+State lives in **PostgreSQL**, not on disk. Two relational tables replace the
+old `data/projects.json` file:
 
-| File | Purpose | Owner |
+| Table | Purpose | Owner |
 |---|---|---|
-| `data/aws-catalog.json` | Service catalog: regions, services, instance types, prices, compliance frameworks. **Read-only** at runtime; updated by hand when AWS publishes new pricing. | Repo author |
-| `data/projects.json` | All user state: projects, documents, chat history, last generated plan. Auto-created on first project; auto-saved on every mutation. | The running app |
+| `users` | One row per GitHub account that signs in: `github_id`, `username`, profile, the OAuth `access_token` (used for Git API calls), and the connected-repository mapping (`repo` JSONB). | The running app |
+| `projects` | One row per architecture engagement, tied to a user via a `user_id` foreign key. `documents`, `chat`, and `last_plan` are JSONB columns so the shape matches the old JSON tree. | The running app |
 
-#### Why file-backed?
+The only read-only file left is `data/aws-catalog.json` (service catalog,
+regions, prices, compliance frameworks — updated by hand when AWS publishes
+new pricing).
 
-- Zero ops for a single-user demo: no database server to install, no
-  credentials, no backup story.
-- The whole state can be inspected and grepped with a text editor.
-- The shape is JSON, so importing into PostgreSQL/SQLite later is a
-  one-time migration, not an architecture rewrite.
+#### Why PostgreSQL?
 
-`lib/projects.js` is the only module that touches `data/projects.json`.
-Every mutation (`createProject`, `updateProject`, `appendChat`,
-`createDocument`, `updateDocument`, `deleteDocument`) re-reads the file,
-mutates the in-memory tree, then writes the whole thing back via
-`fs.writeFileSync`. This is intentionally crude and safe for the demo's
-write volume; if you need concurrent users, swap this module for a real
-database — the public API stays the same.
+- **Real accounts.** Every project carries a `user_id`, so one GitHub account
+  never sees another's work. Reads and writes are filtered by `user_id` in
+  SQL, so a forged project id from another account simply returns `null`.
+- **Survives redeploys.** Render's free file system is ephemeral; a managed
+  Postgres instance persists across deploys on every plan tier.
+- **Concurrent writers.** No more whole-file rewrites — mutations are scoped
+  row updates.
 
-#### Project shape
+`lib/db.js` owns the connection pool and idempotent schema bootstrap
+(`init()`), `lib/users.js` is the user data-access layer, and `lib/projects.js`
+is the user-scoped project + document CRUD. The public function signatures are
+unchanged except every call now takes a leading `userId` and is `async`.
+
+#### Authentication: GitHub OAuth + cookie sessions
+
+1. The browser hits `GET /api/auth/github`, which generates a CSRF `state`
+   nonce, stashes it in the session, and redirects to GitHub's consent screen
+   requesting the `read:user user:email repo` scopes.
+2. GitHub calls back to `GET /api/auth/github/callback?code=…&state=…`. The
+   server verifies `state`, exchanges the `code` for an access token, reads the
+   user's profile, and **dynamically upserts the user in PostgreSQL**
+   (`users.upsertFromGitHub`).
+3. It then starts an isolated cookie session by setting `req.session.userId`.
+   Sessions are stored in the database too, via `connect-pg-simple` (a
+   `session` table created lazily). The cookie is `httpOnly`, `sameSite=lax`,
+   and `secure` in production.
+
+All project, document, chat, and GitHub routes are guarded by `requireAuth`,
+which 401s when there is no `req.session.userId`.
+
+#### Connecting a repository
+
+`POST /api/github/connect` works in two modes:
+
+- `{ mode: 'existing', owner, name, branch? }` — looks the repo up and records
+  the mapping.
+- `{ mode: 'create', name, private?, description? }` — creates a new repo under
+  the user (`auto_init: true`) and records the mapping.
+
+Either way, instead of dumping to a generic directory, this endpoint
+**registers the repository mapping inside the user's specific database row**
+(`users.repo` JSONB: `owner`, `name`, `branch`, `html_url`, …).
+
+#### Syncing markdown without zip or local git
+
+`POST /api/projects/:id/github/sync` pushes every project document (plus the
+generated `deployment-plan.md` when present) into the connected repo. To send
+files without zipping them or installing Git on Render, it uses the low-level
+**Git Trees API** to build a file-structure footprint and move the target
+branch in a single backend flow (`lib/github-api.pushFiles`):
+
+```
+GET   /repos/:o/:r/git/ref/heads/:branch   → current commit sha (base tree)
+POST  /repos/:o/:r/git/blobs        (×N)   → one blob per markdown file
+POST  /repos/:o/:r/git/trees               → assemble the tree (on base_tree)
+POST  /repos/:o/:r/git/commits             → new commit
+PATCH /repos/:o/:r/git/refs/heads/:branch  → move the branch to the new commit
+```
+
+A brand-new empty repo (no ref yet) is handled by creating the first commit
+and `POST`ing a fresh ref instead.
+
+#### Project shape (a `projects` row)
 
 ```json
 {
-  "projects": [
+  "id": "p_a1b2c3d4e5f6",
+  "user_id": 1,
+  "name": "Fintech savings app — KL launch",
+  "region": "ap-southeast-5",
+  "brief": "…",                    // mirror of the brief document's content
+  "enabled_services": ["EC2", "RDS", "S3", "ALB", "..."],
+  "chat": [
+    { "role": "user", "content": "…", "ts": "2026-...",
+      "attachments": [{ "name": "spec.md", "bytes": 1234 }] },
+    { "role": "assistant", "content": "…", "ts": "2026-...",
+      "model": "zai-org/GLM-5.1-TEE" }
+  ],
+  "documents": [
     {
-      "id": "p_a1b2c3d4e5f6",
-      "name": "Fintech savings app — KL launch",
-      "region": "ap-southeast-5",
-      "brief": "…",                    // mirror of the brief document's content
-      "enabled_services": ["EC2", "RDS", "S3", "ALB", "..."],
-      "chat": [
-        { "role": "user", "content": "…", "ts": "2026-...",
-          "attachments": [{ "name": "spec.md", "bytes": 1234 }] },
-        { "role": "assistant", "content": "…", "ts": "2026-...",
-          "model": "zai-org/GLM-5.1-TEE" }
-      ],
-      "documents": [
-        {
-          "id": "d_xxxxxxxx",
-          "type": "brief",              // brief | plan | terraform | proposal | notes
-          "name": "Requirements brief",
-          "content": "# Requirements Brief\n…",
-          "included_in_context": true,  // injected into every chat turn
-          "pinned": true,                // brief is pinned and undeletable
-          "created_at": "…",
-          "updated_at": "…"
-        }
-      ],
-      "last_plan": {                    // result of /api/projects/:id/design
-        "profile": { … },
-        "arch":    { … },
-        "priced":  { "items": [...], "issues": [...], "total": 1418.87 },
-        "compliance": { "ok": true, "passes": [...], "issues": [] },
-        "region": { "code": "ap-southeast-5", "name": "...", "country": "..." },
-        "markdown": "# ☁️ AWS Cloud Infrastructure Deployment Plan\n…"
-      },
+      "id": "d_xxxxxxxx",
+      "type": "brief",              // brief | plan | terraform | proposal | notes
+      "name": "Requirements brief",
+      "content": "# Requirements Brief\n…",
+      "included_in_context": true,  // injected into every chat turn
+      "pinned": true,                // brief is pinned and undeletable
       "created_at": "…",
       "updated_at": "…"
     }
-  ]
+  ],
+  "last_plan": {                    // result of /api/projects/:id/design
+    "profile": { },
+    "arch":    { },
+    "priced":  { "items": [], "issues": [], "total": 1418.87 },
+    "compliance": { "ok": true, "passes": [], "issues": [] },
+    "region": { "code": "ap-southeast-5", "name": "...", "country": "..." },
+    "markdown": "# ☁️ AWS Cloud Infrastructure Deployment Plan\n…"
+  },
+  "created_at": "…",
+  "updated_at": "…"
 }
 ```
 
-#### Privacy on the filesystem
+#### Privacy
 
 - Chat **attachment contents are NOT persisted**. The user message stores
   only `{ name, bytes }` metadata; the file body lives in memory for one LLM
-  call and is then discarded. This keeps the on-disk JSON free of
-  potentially sensitive uploads.
+  call and is then discarded.
 - Documents the user authors in the editor **are** persisted (that's the
-  whole point of the document store). Treat `data/projects.json` like a
-  user's notebook.
-- The `.env` file is git-ignored. The `Chutes_api_key` never leaves the
-  server process.
+  whole point of the document store).
+- The `.env` file is git-ignored. The `Chutes_api_key`, GitHub client secret,
+  and stored OAuth tokens never leave the server process — `users.publicUser()`
+  strips the access token before any response reaches the client.
 
 ### Frontend ↔ backend coupling
 
@@ -344,8 +401,8 @@ Putting it all together, here's what happens when a user types
    `{ message, attachments: [] }`.
 2. **Express middleware** — `uploadRateLimit` checks the per-IP sliding window;
    sets `X-RateLimit-*` headers; rejects with 429 if exceeded.
-3. **Persistence** — `projects.appendChat(pid, { role:'user', content })`
-   writes the user turn to `data/projects.json`.
+3. **Persistence** — `projects.appendChat(userId, pid, { role:'user', content })`
+   writes the user turn to the `projects` row in PostgreSQL.
 4. **Context resolution** — `findReferencedDocs(message, project.documents)`
    parses `#brief`, normalises it (lowercase, strip `.md`, dashes), and
    matches the brief document. The brief is added to the system prompt
@@ -369,19 +426,25 @@ Putting it all together, here's what happens when a user types
 
 ```
 .
-├─ server.js                    Express server (REST API + SPA static)
+├─ server.js                    Express server (REST API + SPA static + auth)
 ├─ package.json                 Root: starts the server, builds the client
-├─ .env                         Chutes_api_key (you create this)
+├─ .env                         Chutes key, GitHub OAuth, DATABASE_URL (you create this)
+├─ render.yaml                  Render blueprint (web service + managed Postgres)
 ├─ data/
-│  ├─ aws-catalog.json          Deterministic services + regions + pricing
-│  └─ projects.json             Persisted project state (auto-created)
+│  └─ aws-catalog.json          Deterministic services + regions + pricing (read-only)
 ├─ lib/
 │  ├─ catalog.js                Pricing helpers + region availability + compliance
 │  ├─ catalog-api.js            Public catalog summary for the frontend
 │  ├─ service-docs.js           Per-service deep documentation
 │  ├─ architect.js              LLM orchestrator: design / chat / draft / spec
 │  ├─ chutes.js                 Chutes API client + JSON extraction
-│  ├─ projects.js               File-backed project + document CRUD
+│  ├─ db.js                     PostgreSQL pool + schema bootstrap (users, projects)
+│  ├─ users.js                  User data-access (GitHub upsert, repo mapping)
+│  ├─ projects.js               PostgreSQL project + document CRUD (user-scoped)
+│  ├─ github-config.js          OAuth credential selection (local vs production)
+│  ├─ github-api.js             GitHub REST + Git Trees push (no zip / no git)
+│  ├─ routes-auth.js            OAuth login / callback / logout / me
+│  ├─ routes-github.js          Repo list / connect / disconnect
 │  └─ rate-limit.js             Sliding-window per-IP rate limiter
 ├─ client/
 │  ├─ index.html                Vite entry
@@ -399,7 +462,8 @@ Putting it all together, here's what happens when a user types
 │     ├─ components/            ChatPane, StudioPane, DocumentEditor, …
 │     ├─ components/bits/       React-Bits primitives (Aurora, GridMotion, …)
 │     ├─ lib/
-│     │  ├─ api.js              Fetch wrapper for the REST API
+│     │  ├─ api.js              Fetch wrapper for the REST API (credentials: include)
+│     │  ├─ auth.js             useAuth hook (session state, login, logout)
 │     │  ├─ markdown.js         marked + Mermaid post-processor + normaliser
 │     │  └─ router.js           Tiny hash router
 │     └─ styles/                Global, app, landing CSS
@@ -417,8 +481,9 @@ Putting it all together, here's what happens when a user types
 git clone https://github.com/<you>/<repo>.git
 cd <repo>
 
-:: 2. Create the .env file with your Chutes key
-echo Chutes_api_key=cpk_xxxxxxxx_yyyyyy_zzzzzz > .env
+:: 2. Create the .env file (Chutes key, GitHub OAuth, DATABASE_URL)
+::    Copy the template and fill in your values:
+copy .env.example .env
 
 :: 3. Install everything (root deps + client deps via the postinstall hook)
 npm install
@@ -430,11 +495,18 @@ npm run build
 npm start
 ```
 
-Then open <http://localhost:3000>.
+Then open <http://localhost:3000>. You'll land on a **Sign in with GitHub**
+screen — the workspace is gated behind a session.
 
 > ⚠️ **Run `npm start` from the project root, NOT from `client/`.** The
 > client folder only has `dev`/`build`/`preview` scripts; the Express server
 > lives at the root.
+
+> 🔑 **Prerequisites for sign-in:** a reachable PostgreSQL instance
+> (`DATABASE_URL`) and a GitHub OAuth app whose callback URL is
+> `http://localhost:3000/api/auth/github/callback` (see
+> [Configuration](#configuration-env)). The `users`, `projects`, and `session`
+> tables are created automatically on first boot.
 
 ---
 
@@ -461,14 +533,16 @@ dir client\dist\index.html
 
 :: 5. Confirm the .env file
 type .env
-::  → must contain at minimum: Chutes_api_key=...
+::  → must contain at minimum: Chutes_api_key=..., DATABASE_URL=...,
+::    and a GitHub OAuth pair (GITHUB_CLIENT_ID[_LOCAL] / _SECRET[_LOCAL])
 
 :: 6. Run the server
 npm start
 ```
 
-The `data/projects.json` file is created automatically the first time you
-create a project. Nothing else needs scaffolding.
+The `users`, `projects`, and `session` tables are created automatically in
+PostgreSQL on first boot (`lib/db.js` → `init()`). Nothing else needs
+scaffolding.
 
 ### Verifying the build worked
 
@@ -510,24 +584,72 @@ and serve everything from `npm start` on port 3000.
 
 ## Configuration (.env)
 
-Create `.env` in the project root:
+Copy `.env.example` to `.env` and fill in your values:
 
 ```
+# Chutes LLM
 Chutes_api_key=cpk_xxxxxxxxxxxxxxxxxxxxxxxx_yyyyyyyyyyyyyyyy_zzzzzzzzzzzz
 CHUTES_MODEL=zai-org/GLM-5.1-TEE
+
+# GitHub OAuth (production pair)
+GITHUB_CLIENT_ID=Iv1_xxxxxxxxxxxx
+GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# GitHub OAuth (local/dev pair)
+GITHUB_CLIENT_ID_LOCAL=Iv1_yyyyyyyyyyyy
+GITHUB_CLIENT_SECRET_LOCAL=yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+
+# Server + database
 PORT=3000
+SESSION_SECRET=a_long_random_string
+DATABASE_URL=postgres://user:pass@localhost:5432/cia
 ```
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `Chutes_api_key` | **yes** | — | Bearer token used in `Authorization: Bearer …` against `https://llm.chutes.ai/v1/chat/completions`. Get one at <https://chutes.ai>. |
 | `CHUTES_MODEL`   | no | `zai-org/GLM-5.1-TEE` | Any Chutes-listed chat-completions model id. The full list is returned by `GET https://llm.chutes.ai/v1/models`. |
+| `DATABASE_URL` | **yes** | — | PostgreSQL connection string. TLS is auto-enabled for non-localhost hosts. The schema is created on boot. |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | prod | — | Production GitHub OAuth app credentials (used when `NODE_ENV=production` or on Render). |
+| `GITHUB_CLIENT_ID_LOCAL` / `GITHUB_CLIENT_SECRET_LOCAL` | local | — | Local GitHub OAuth app credentials (used in development). |
+| `GITHUB_ENV` | no | auto | Force `local` or `production` credential selection, overriding auto-detection. |
+| `SESSION_SECRET` | recommended | dev fallback | Secret used to sign the session cookie. Set a long random value in production. |
+| `PUBLIC_URL` | no | derived | Explicit public base URL for building the OAuth callback (otherwise derived from the request / `RENDER_EXTERNAL_URL`). |
 | `PORT`           | no | `3000` | Port for the Express server. |
 
 > The variable name **must** be `Chutes_api_key` (capital C, the rest
 > lowercase). The code also accepts `CHUTES_API_KEY` as a fallback.
 
 > The `.env` file is gitignored — never commit it.
+
+### Server configuration & local vs. production selection
+
+The app registers **two GitHub OAuth apps** and chooses the right credential
+pair at runtime, so the same codebase runs locally and on Render without edits
+(`lib/github-config.js`):
+
+1. `GITHUB_ENV=local|production` forces a mode if set.
+2. Otherwise `NODE_ENV=production` → production.
+3. Otherwise the presence of Render's `RENDER` / `RENDER_EXTERNAL_URL` → production.
+4. Otherwise → local.
+
+Set up the GitHub OAuth apps at
+<https://github.com/settings/developers> → **New OAuth App**:
+
+| App | Homepage URL | Authorization callback URL |
+|---|---|---|
+| Local | `http://localhost:3000` | `http://localhost:3000/api/auth/github/callback` |
+| Production | `https://<your-app>.onrender.com` | `https://<your-app>.onrender.com/api/auth/github/callback` |
+
+The callback URL is derived from the incoming request (honouring
+`x-forwarded-proto`/`-host` because the server sets `trust proxy`), or pinned
+explicitly with `PUBLIC_URL`. The requested scopes are
+`read:user user:email repo` — `repo` is required to create repositories and
+push files on the user's behalf.
+
+> **Dev note:** when using the Vite dev server on `:5173`, sign in by opening
+> `http://localhost:3000` directly (the Express origin), or register the
+> `:5173` callback as a second local app. Session cookies are host-scoped, so
+> they're shared across ports once set.
 
 ---
 
@@ -557,6 +679,27 @@ node -e "require('dotenv').config(); fetch('https://llm.chutes.ai/v1/models', { 
 ## REST API
 
 All endpoints are served by `server.js`. The SPA reaches them via `/api/...`.
+Every request from the client sends the session cookie (`credentials:
+'include'`). **Project, document, chat, and GitHub routes require an
+authenticated session** and return `401` otherwise. Catalog routes are public.
+
+### Auth
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`  | `/api/auth/github` | Start OAuth (`?returnTo=#/app`); redirects to GitHub |
+| `GET`  | `/api/auth/github/callback` | OAuth callback; upserts the user, starts the session, redirects back |
+| `POST` | `/api/auth/logout` | Destroy the session |
+| `GET`  | `/api/auth/me` | `{ user, configured, mode }` — current session user (or `null`) |
+
+### GitHub
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`  | `/api/github/repos` | List the signed-in user's repositories |
+| `POST` | `/api/github/connect` | Connect existing `{ mode:'existing', owner, name, branch? }` or create `{ mode:'create', name, private?, description? }`; stores the mapping on the user row |
+| `POST` | `/api/github/disconnect` | Clear the connected-repo mapping |
+| `POST` | `/api/projects/:id/github/sync` | Push the project's markdown (+ plan) to the repo via the Git Trees API; body: `{ path?, branch?, message? }` |
 
 ### Catalog
 
@@ -569,6 +712,8 @@ All endpoints are served by `server.js`. The SPA reaches them via `/api/...`.
 | `GET`  | `/api/services` | Legacy service-name list |
 
 ### Projects
+
+> All project routes require a session and are scoped to the signed-in user.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -700,45 +845,70 @@ discounts) before signing a contract.
 
 ## Smoke tests
 
-`scripts/` contains automated end-to-end checks. Start the server first
-(`npm start`), then in another terminal:
+`scripts/` contains automated end-to-end checks.
+
+The data layer can be tested without GitHub or a running server — point
+`DATABASE_URL` at a throwaway database and run:
 
 ```bat
+:: User + project DB layer: upsert, per-user scoping, cross-user isolation,
+:: document CRUD, repo mapping, cascade delete (needs DATABASE_URL)
+node scripts\smoke-db.js
+```
+
+For the HTTP checks, start the server first (`npm start`), then in another
+terminal:
+
+```bat
+:: Auth gate + session wiring: public catalog, /api/auth/me, 401 on
+:: project + github routes without a session
+node scripts\smoke-auth-http.js
+
 :: Deterministic-only — no LLM call
 node scripts\smoke-catalog.js
 
 :: SPA shell + static serving
 node scripts\smoke-spa.js
 
-:: Per-IP rate limiting + service detail endpoint
-node scripts\smoke-v3.js
-
-:: Per-project documents + brief mirror
-node scripts\smoke-v4.js
-
-:: refine-brief, quick-spec, #docname references
-node scripts\smoke-v5.js
-
 :: Mermaid normaliser unit-style check
 node scripts\smoke-mermaid.js
-
-:: End-to-end design pipeline (HITS the LLM, slow)
-node scripts\smoke-llm.js
-
-:: Full lifecycle: project + chat + design + delete
-node scripts\smoke-fullstack.js
-
-:: Architect grounding (chat history + in-context docs)
-node scripts\smoke-context.js
 ```
+
+> **Note:** the older `smoke-v3/v4/v5`, `smoke-fullstack`, `smoke-context`,
+> `smoke-default-services`, and `smoke-attachments` scripts hit the
+> now-authenticated project routes directly and will receive `401` without a
+> session cookie. Run them through an authenticated browser session, or adapt
+> them to carry the `cia.sid` cookie, before relying on them.
 
 ---
 
 ## Troubleshooting
 
-**Black screen at `#/app`.** Open the browser DevTools console; you'll see
-the offending React error. The most common cause has been state/typo bugs
-during refactors. Reload after any code edit since the SPA caches aggressively.
+**Stuck on the "Sign in with GitHub" screen / "GitHub OAuth isn't configured".**
+The server didn't find a client id/secret for the active mode. Check
+`/api/auth/me` — `configured` should be `true` and `mode` should match your
+intent. Set the `GITHUB_CLIENT_ID[_LOCAL]` / `GITHUB_CLIENT_SECRET[_LOCAL]`
+pair and restart.
+
+**`GitHub sign-in failed: invalid OAuth state`.** The session cookie was lost
+between starting the flow and the callback (often a port/origin mismatch in
+dev). Open the app on the Express origin (`http://localhost:3000`) and retry.
+
+**`redirect_uri_mismatch` from GitHub.** The callback URL on your OAuth app
+doesn't match what the server sent. It must be exactly
+`<base>/api/auth/github/callback`. Pin the base with `PUBLIC_URL` if you're
+behind a proxy.
+
+**Server exits with "failed to initialise database".** `DATABASE_URL` is
+missing, wrong, or the database is unreachable. For hosted Postgres, TLS is
+auto-enabled; for localhost it's disabled. Verify with
+`psql "$DATABASE_URL" -c "select 1"`.
+
+**`401` from `/api/projects` in a script.** Project routes now require a
+session. Sign in through the browser, or carry the `cia.sid` cookie in your
+test client.
+
+
 
 **`npm start` says "Missing script: start".** You're in `client/`. Run it
 from the project root (`cd ..`).

@@ -14,8 +14,11 @@
     "postinstall": "npm --prefix client install --no-audit --no-fund"
   },
   "dependencies": {
+    "connect-pg-simple": "^10.0.0",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "express-session": "^1.19.0",
+    "pg": "^8.21.0"
   },
   "engines": {
     "node": ">=18"

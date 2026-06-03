@@ -1,28 +1,71 @@
 // The Cloud Infrastructure Architect — web server.
 // Serves the Vite-built React client from /client/dist (or the legacy /public
 // fallback) and exposes the project + chat + design REST API.
+//
+// State is persisted in PostgreSQL (lib/db.js). Users authenticate with GitHub
+// (lib/routes-auth.js) and every project is scoped to the signed-in user's
+// database row, so accounts, sessions, and projects are fully isolated.
 
-require('dotenv').config();
+// `override: true` makes the local .env authoritative over any stale variables
+// already exported in the shell (e.g. a leftover DATABASE_URL from a previous
+// test session). On hosting platforms like Render there is no .env file, so
+// this is a no-op there and the platform-injected env vars remain in effect.
+require('dotenv').config({ override: true });
 
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const session = require('express-session');
+const PgSession = require('connect-pg-simple')(session);
 
+const db = require('./lib/db');
 const { listRegions } = require('./lib/catalog');
 const { design, chatTurn, draftBriefFromHistory, refineBriefFromText, quickSpec, findReferencedDocs, ALL_SERVICES } = require('./lib/architect');
 const projects = require('./lib/projects');
+const users = require('./lib/users');
+const ghApi = require('./lib/github-api');
 const { getCatalogPublic } = require('./lib/catalog-api');
 const { getServiceDoc, SERVICE_DOCS } = require('./lib/service-docs');
 const { rateLimit } = require('./lib/rate-limit');
+const authRoutes = require('./lib/routes-auth');
+const { router: githubRoutes, requireUserWithToken } = require('./lib/routes-github');
 
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '1mb' }));
 
+// ---- Session (PostgreSQL-backed cookie sessions) ---------------------------
+const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production'
+  || !!process.env.RENDER || !!process.env.RENDER_EXTERNAL_URL;
+
+app.use(session({
+  name: 'cia.sid',
+  store: new PgSession({
+    pool: db.pool,
+    tableName: 'session',
+    createTableIfMissing: true,
+  }),
+  secret: process.env.SESSION_SECRET || 'cia-dev-secret-change-me',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: isProd,                 // HTTPS-only cookies in production
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+  },
+}));
+
 // Per-IP rate limits
 const chatRateLimit   = rateLimit({ name: 'chat',   windowMs: 60_000, max: 30 });
 const designRateLimit = rateLimit({ name: 'design', windowMs: 60_000, max: 6  });
 const uploadRateLimit = rateLimit({ name: 'upload', windowMs: 60_000, max: 12 });
+
+// Require an authenticated session for all project + document + chat routes.
+function requireAuth(req, res, next) {
+  if (!req.session.userId) return res.status(401).json({ error: 'not signed in' });
+  next();
+}
 
 // ---- Static: prefer the React build, fall back to the legacy public site ----
 const clientDist = path.join(__dirname, 'client', 'dist');
@@ -31,6 +74,10 @@ const staticDir = fs.existsSync(path.join(clientDist, 'index.html'))
   ? clientDist
   : (fs.existsSync(path.join(legacyPublic, 'index.html')) ? legacyPublic : clientDist);
 app.use(express.static(staticDir));
+
+// ---- Auth + GitHub ---------------------------------------------------------
+app.use('/api/auth', authRoutes);
+app.use('/api/github', githubRoutes);
 
 // ---- Catalog ---------------------------------------------------------------
 
@@ -204,79 +251,173 @@ app.get('/api/services-overview', (_req, res) => {
   res.json({ services });
 });
 
-// ---- Projects --------------------------------------------------------------
+// ---- Projects (all scoped to the signed-in user) ---------------------------
 
-app.get('/api/projects', (_req, res) => {
-  res.json({ projects: projects.listProjects() });
+app.get('/api/projects', requireAuth, async (req, res) => {
+  try {
+    res.json({ projects: await projects.listProjects(req.session.userId) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/projects', (req, res) => {
+app.post('/api/projects', requireAuth, async (req, res) => {
   const { name, region, brief, enabled_services } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
-  const project = projects.createProject({ name: String(name).trim(), region, brief, enabled_services });
-  res.status(201).json({ project });
+  try {
+    const project = await projects.createProject(req.session.userId, { name: String(name).trim(), region, brief, enabled_services });
+    res.status(201).json({ project });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/projects/:id', (req, res) => {
-  const p = projects.getProject(req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  res.json({ project: p });
+app.get('/api/projects/:id', requireAuth, async (req, res) => {
+  try {
+    const p = await projects.getProject(req.session.userId, req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    res.json({ project: p });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.patch('/api/projects/:id', (req, res) => {
-  const p = projects.updateProject(req.params.id, req.body || {});
-  if (!p) return res.status(404).json({ error: 'not found' });
-  res.json({ project: p });
+app.patch('/api/projects/:id', requireAuth, async (req, res) => {
+  try {
+    const p = await projects.updateProject(req.session.userId, req.params.id, req.body || {});
+    if (!p) return res.status(404).json({ error: 'not found' });
+    res.json({ project: p });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/projects/:id', (req, res) => {
-  const ok = projects.deleteProject(req.params.id);
-  if (!ok) return res.status(404).json({ error: 'not found' });
-  res.json({ ok: true });
+app.delete('/api/projects/:id', requireAuth, async (req, res) => {
+  try {
+    const ok = await projects.deleteProject(req.session.userId, req.params.id);
+    if (!ok) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/projects/:id/clear-chat', (req, res) => {
-  const p = projects.clearChat(req.params.id);
-  if (!p) return res.status(404).json({ error: 'not found' });
-  res.json({ project: p });
+app.post('/api/projects/:id/clear-chat', requireAuth, async (req, res) => {
+  try {
+    const p = await projects.clearChat(req.session.userId, req.params.id);
+    if (!p) return res.status(404).json({ error: 'not found' });
+    res.json({ project: p });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ---- Documents (per-project markdown files) -------------------------------
 
-app.get('/api/projects/:id/documents', (req, res) => {
-  const docs = projects.listDocuments(req.params.id);
-  if (!docs) return res.status(404).json({ error: 'project not found' });
-  res.json({ documents: docs });
+app.get('/api/projects/:id/documents', requireAuth, async (req, res) => {
+  try {
+    const docs = await projects.listDocuments(req.session.userId, req.params.id);
+    if (!docs) return res.status(404).json({ error: 'project not found' });
+    res.json({ documents: docs });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/projects/:id/documents', (req, res) => {
-  const doc = projects.createDocument(req.params.id, req.body || {});
-  if (!doc) return res.status(404).json({ error: 'project not found' });
-  res.status(201).json({ document: doc });
+app.post('/api/projects/:id/documents', requireAuth, async (req, res) => {
+  try {
+    const doc = await projects.createDocument(req.session.userId, req.params.id, req.body || {});
+    if (!doc) return res.status(404).json({ error: 'project not found' });
+    res.status(201).json({ document: doc });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/projects/:id/documents/:docId', (req, res) => {
-  const doc = projects.getDocument(req.params.id, req.params.docId);
-  if (!doc) return res.status(404).json({ error: 'not found' });
-  res.json({ document: doc });
+app.get('/api/projects/:id/documents/:docId', requireAuth, async (req, res) => {
+  try {
+    const doc = await projects.getDocument(req.session.userId, req.params.id, req.params.docId);
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    res.json({ document: doc });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.patch('/api/projects/:id/documents/:docId', (req, res) => {
-  const doc = projects.updateDocument(req.params.id, req.params.docId, req.body || {});
-  if (!doc) return res.status(404).json({ error: 'not found' });
-  res.json({ document: doc });
+app.patch('/api/projects/:id/documents/:docId', requireAuth, async (req, res) => {
+  try {
+    const doc = await projects.updateDocument(req.session.userId, req.params.id, req.params.docId, req.body || {});
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    res.json({ document: doc });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/projects/:id/documents/:docId', (req, res) => {
-  const ok = projects.deleteDocument(req.params.id, req.params.docId);
-  if (!ok) return res.status(400).json({ error: 'cannot delete (not found, or it is the brief which is undeletable)' });
-  res.json({ ok: true });
+app.delete('/api/projects/:id/documents/:docId', requireAuth, async (req, res) => {
+  try {
+    const ok = await projects.deleteDocument(req.session.userId, req.params.id, req.params.docId);
+    if (!ok) return res.status(400).json({ error: 'cannot delete (not found, or it is the brief which is undeletable)' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ---- GitHub sync: push project markdown via the Git Trees API --------------
+
+app.post('/api/projects/:id/github/sync', requireAuth, requireUserWithToken, async (req, res) => {
+  try {
+    const project = await projects.getProject(req.session.userId, req.params.id);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+
+    const repo = req.ghUser.repo;
+    if (!repo || !repo.owner || !repo.name) {
+      return res.status(400).json({ error: 'no repository connected; connect one first' });
+    }
+
+    // Allow a per-sync subfolder + branch override; default to the connected
+    // repo's branch and a folder named after the project.
+    const branch = String(req.body?.branch || repo.branch || repo.default_branch || 'main');
+    const subdir = sanitizeDir(req.body?.path != null ? String(req.body.path) : slug(project.name));
+
+    const files = buildProjectFiles(project, subdir);
+    if (files.length === 0) return res.status(400).json({ error: 'project has no markdown to sync' });
+
+    const message = String(req.body?.message || `Sync "${project.name}" from Cloud Infrastructure Architect`);
+    const result = await ghApi.pushFiles(req.ghUser.access_token, {
+      owner: repo.owner, repo: repo.name, branch, message, files,
+    });
+    res.json({ result, files: files.map(f => f.path) });
+  } catch (err) {
+    console.error('[github sync] error:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Collect every markdown deliverable for a project into a flat file list.
+// Documents keep their own names; the generated plan is included when present.
+function buildProjectFiles(project, subdir) {
+  const prefix = subdir ? subdir.replace(/\/+$/, '') + '/' : '';
+  const files = [];
+  const seen = new Set();
+
+  for (const d of (project.documents || [])) {
+    let name = sanitizeFile(d.name || 'document.md');
+    if (!/\.md$/i.test(name)) name += '.md';
+    // De-dupe identical names.
+    let candidate = `${prefix}${name}`;
+    let n = 1;
+    while (seen.has(candidate.toLowerCase())) {
+      candidate = `${prefix}${name.replace(/\.md$/i, '')}-${n++}.md`;
+    }
+    seen.add(candidate.toLowerCase());
+    files.push({ path: candidate, content: d.content || '' });
+  }
+
+  if (project.last_plan?.markdown) {
+    let candidate = `${prefix}deployment-plan.md`;
+    if (!seen.has(candidate.toLowerCase())) {
+      seen.add(candidate.toLowerCase());
+      files.push({ path: candidate, content: project.last_plan.markdown });
+    }
+  }
+
+  return files;
+}
+
+function slug(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'project';
+}
+function sanitizeFile(s) {
+  return String(s).replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100) || 'document.md';
+}
+function sanitizeDir(s) {
+  return String(s).split('/').map(seg => seg.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')).filter(Boolean).join('/').slice(0, 120);
+}
 
 // ---- Refine brief from current editor text --------------------------------
 
-app.post('/api/projects/:id/refine-brief', designRateLimit, async (req, res) => {
-  const project = projects.getProject(req.params.id);
+app.post('/api/projects/:id/refine-brief', requireAuth, designRateLimit, async (req, res) => {
+  const project = await projects.getProject(req.session.userId, req.params.id);
   if (!project) return res.status(404).json({ error: 'project not found' });
   const sourceText = String(req.body?.source || '').trim();
   if (!sourceText) return res.status(400).json({ error: 'source text is required' });
@@ -284,9 +425,9 @@ app.post('/api/projects/:id/refine-brief', designRateLimit, async (req, res) => 
     const { content, model } = await refineBriefFromText({ project, sourceText });
     const briefDoc = (project.documents || []).find(d => d.type === 'brief');
     let document;
-    if (briefDoc) document = projects.updateDocument(project.id, briefDoc.id, { content });
-    else document = projects.createDocument(project.id, { type: 'brief', name: 'Requirements brief', content, included_in_context: true });
-    projects.updateProject(project.id, { brief: content });
+    if (briefDoc) document = await projects.updateDocument(req.session.userId, project.id, briefDoc.id, { content });
+    else document = await projects.createDocument(req.session.userId, project.id, { type: 'brief', name: 'Requirements brief', content, included_in_context: true });
+    await projects.updateProject(req.session.userId, project.id, { brief: content });
     res.json({ document, model });
   } catch (err) {
     console.error('[refine-brief] error:', err);
@@ -296,8 +437,8 @@ app.post('/api/projects/:id/refine-brief', designRateLimit, async (req, res) => 
 
 // ---- Quick Spec (Kiro-style: Requirements → Design → Tasks) ---------------
 
-app.post('/api/projects/:id/quick-spec', designRateLimit, async (req, res) => {
-  const project = projects.getProject(req.params.id);
+app.post('/api/projects/:id/quick-spec', requireAuth, designRateLimit, async (req, res) => {
+  const project = await projects.getProject(req.session.userId, req.params.id);
   if (!project) return res.status(404).json({ error: 'project not found' });
   const prompt = String(req.body?.prompt || '').trim();
   if (!prompt) return res.status(400).json({ error: 'prompt is required' });
@@ -313,7 +454,7 @@ app.post('/api/projects/:id/quick-spec', designRateLimit, async (req, res) => {
     });
     // Save the result as a new spec document.
     const safeName = `spec-${new Date().toISOString().slice(0,10)}-${Math.random().toString(36).slice(2, 6)}.md`;
-    const document = projects.createDocument(project.id, {
+    const document = await projects.createDocument(req.session.userId, project.id, {
       type: 'plan', name: safeName, content, included_in_context: false,
     });
     res.json({ document, model });
@@ -325,8 +466,8 @@ app.post('/api/projects/:id/quick-spec', designRateLimit, async (req, res) => {
 
 // ---- Draft brief from chat history ----------------------------------------
 
-app.post('/api/projects/:id/draft-brief', designRateLimit, async (req, res) => {
-  const project = projects.getProject(req.params.id);
+app.post('/api/projects/:id/draft-brief', requireAuth, designRateLimit, async (req, res) => {
+  const project = await projects.getProject(req.session.userId, req.params.id);
   if (!project) return res.status(404).json({ error: 'project not found' });
   try {
     const { content, model } = await draftBriefFromHistory({
@@ -337,14 +478,14 @@ app.post('/api/projects/:id/draft-brief', designRateLimit, async (req, res) => {
     const briefDoc = (project.documents || []).find(d => d.type === 'brief');
     let document = null;
     if (briefDoc) {
-      document = projects.updateDocument(project.id, briefDoc.id, { content });
+      document = await projects.updateDocument(req.session.userId, project.id, briefDoc.id, { content });
     } else {
-      document = projects.createDocument(project.id, {
+      document = await projects.createDocument(req.session.userId, project.id, {
         type: 'brief', name: 'Requirements brief', content, included_in_context: true,
       });
     }
     // Mirror back into project.brief for legacy paths.
-    projects.updateProject(project.id, { brief: content });
+    await projects.updateProject(req.session.userId, project.id, { brief: content });
     res.json({ document, model });
   } catch (err) {
     console.error('[draft-brief] error:', err);
@@ -354,8 +495,8 @@ app.post('/api/projects/:id/draft-brief', designRateLimit, async (req, res) => {
 
 // ---- Chat (rate-limited, with attachments + document context injection) ----
 
-app.post('/api/projects/:id/chat', uploadRateLimit, async (req, res) => {
-  const project = projects.getProject(req.params.id);
+app.post('/api/projects/:id/chat', requireAuth, uploadRateLimit, async (req, res) => {
+  const project = await projects.getProject(req.session.userId, req.params.id);
   if (!project) return res.status(404).json({ error: 'project not found' });
   const { message, attachments } = req.body || {};
   if (!message || !String(message).trim()) return res.status(400).json({ error: 'message is required' });
@@ -377,7 +518,7 @@ app.post('/api/projects/:id/chat', uploadRateLimit, async (req, res) => {
     }
   }
 
-  const userEntry = projects.appendChat(project.id, {
+  const userEntry = await projects.appendChat(req.session.userId, project.id, {
     role: 'user',
     content: String(message),
     attachments: safeAttachments.map(a => ({ name: a.name, bytes: a.bytes })), // metadata only on disk
@@ -402,11 +543,11 @@ app.post('/api/projects/:id/chat', uploadRateLimit, async (req, res) => {
       attachments: safeAttachments,
       contextDocs,
     });
-    const assistantEntry = projects.appendChat(project.id, { role: 'assistant', content, model });
+    const assistantEntry = await projects.appendChat(req.session.userId, project.id, { role: 'assistant', content, model });
     res.json({ user: userEntry, assistant: assistantEntry });
   } catch (err) {
     console.error('[chat] error:', err);
-    const assistantEntry = projects.appendChat(project.id, {
+    const assistantEntry = await projects.appendChat(req.session.userId, project.id, {
       role: 'assistant',
       content: `⚠️ I couldn't reach the LLM: ${err.message}`,
       error: true,
@@ -417,8 +558,8 @@ app.post('/api/projects/:id/chat', uploadRateLimit, async (req, res) => {
 
 // ---- Generate full plan (one-shot, deterministic guardrail) -----------------
 
-app.post('/api/projects/:id/design', designRateLimit, async (req, res) => {
-  const project = projects.getProject(req.params.id);
+app.post('/api/projects/:id/design', requireAuth, designRateLimit, async (req, res) => {
+  const project = await projects.getProject(req.session.userId, req.params.id);
   if (!project) return res.status(404).json({ error: 'project not found' });
   const brief = String(req.body?.brief || project.brief || '').trim();
   if (!brief) return res.status(400).json({ error: 'project has no brief; set one first' });
@@ -430,9 +571,9 @@ app.post('/api/projects/:id/design', designRateLimit, async (req, res) => {
       additionalCompliance: Array.isArray(req.body?.compliance) ? req.body.compliance : [],
       allowedServices: project.enabled_services,
     });
-    projects.updateProject(project.id, { brief, last_plan: result });
+    await projects.updateProject(req.session.userId, project.id, { brief, last_plan: result });
     // also drop a trace into the chat so the conversation reflects the action
-    projects.appendChat(project.id, {
+    await projects.appendChat(req.session.userId, project.id, {
       role: 'assistant',
       content: `📐 **Generated deployment plan** — ${result.priced.items.length} components, **$${result.priced.total.toFixed(2)}/month** in \`${result.region.code}\`. Check the **Studio** panel for the full document, diagram, and itemized bill.`,
       meta: { kind: 'plan-generated', total: result.priced.total },
@@ -470,14 +611,20 @@ app.get(/^(?!\/api\/).*/, (_req, res, next) => {
 });
 
 // Only bind a port when run as the main module (e.g. `npm start` locally).
-// On Vercel, server.js is required from api/index.js and the platform
-// dispatches requests directly to the exported Express app.
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`☁️  Cloud Infrastructure Architect running at http://localhost:${PORT}`);
-    console.log(`    Serving static from: ${staticDir}`);
-  });
+  db.init()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`☁️  Cloud Infrastructure Architect running at http://localhost:${PORT}`);
+        console.log(`    Serving static from: ${staticDir}`);
+        console.log(`    GitHub OAuth mode: ${require('./lib/github-config').MODE}`);
+      });
+    })
+    .catch((err) => {
+      console.error('[startup] failed to initialise database:', err.message);
+      process.exit(1);
+    });
 }
 
 module.exports = app;

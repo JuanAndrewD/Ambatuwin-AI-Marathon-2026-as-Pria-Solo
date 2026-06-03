@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Cloud, BookText, Settings2, Activity, PencilLine, Home, Library, FileArchive, FolderOpen, Zap } from 'lucide-react';
+import { Cloud, BookText, Settings2, Activity, PencilLine, Home, Library, FileArchive, FolderOpen, Zap, Github, LogOut } from 'lucide-react';
 import JSZip from 'jszip';
 import { api } from '../lib/api';
 import { useNavigate } from '../lib/router';
+import { useAuth } from '../lib/auth';
 import ChatPane from '../components/ChatPane';
 import StudioPane from '../components/StudioPane';
 import ResourcesPane from '../components/ResourcesPane';
@@ -10,6 +11,8 @@ import DocumentsPane from '../components/DocumentsPane';
 import DocumentEditor from '../components/DocumentEditor';
 import ResizeHandle from '../components/ResizeHandle';
 import QuickSpecModal from '../components/QuickSpecModal';
+import SignInScreen from '../components/SignInScreen';
+import GitHubModal from '../components/GitHubModal';
 import '../styles/app.css';
 
 const LEFT_TABS = [
@@ -23,6 +26,9 @@ const PANE_KEY = 'cia.pane-widths.v1';
 
 export default function Workspace() {
   const nav = useNavigate();
+  const auth = useAuth();
+  const [showGitHub, setShowGitHub] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [catalog, setCatalog] = useState(null);
   const [projects, setProjects] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -69,15 +75,21 @@ export default function Workspace() {
   const autosaveRef = useRef(null);
 
   useEffect(() => {
+    // Catalog is public; load it regardless of auth state.
+    api.catalog().then(setCatalog).catch(e => setError(e.message));
+  }, []);
+
+  useEffect(() => {
+    // Projects are user-scoped — only fetch once a session exists.
+    if (!auth.user) { setProjects([]); setActiveId(null); return; }
     (async () => {
       try {
-        const [cat, list] = await Promise.all([api.catalog(), api.listProjects()]);
-        setCatalog(cat);
+        const list = await api.listProjects();
         setProjects(list.projects);
-        if (list.projects.length > 0) setActiveId(list.projects[0].id);
+        if (list.projects.length > 0) setActiveId(prev => prev || list.projects[0].id);
       } catch (e) { setError(e.message); }
     })();
-  }, []);
+  }, [auth.user]);
 
   useEffect(() => {
     if (!activeId) { setActiveProject(null); return; }
@@ -401,6 +413,16 @@ export default function Workspace() {
     return () => document.body.classList.remove('workspace-mounted');
   }, []);
 
+  // Surface an OAuth error passed back via the callback redirect.
+  useEffect(() => {
+    const m = (window.location.hash || '').match(/auth_error=([^&]+)/);
+    if (m) {
+      setError('GitHub sign-in failed: ' + decodeURIComponent(m[1]));
+      // Strip the param so it doesn't persist on refresh.
+      window.history.replaceState(null, '', window.location.pathname + '#/app');
+    }
+  }, []);
+
   // ---- Auto-sync ----------------------------------------------------------
   // Poll the active project every 4s so docs created server-side (Quick Spec,
   // Draft Brief, AI refine) appear without manual refresh. Also refresh on
@@ -575,6 +597,27 @@ export default function Workspace() {
       }))
     : [];
 
+  // ---- Auth gate ----------------------------------------------------------
+  // Until a session exists, the whole workspace is replaced by the sign-in
+  // screen. We still let the body class apply so the background matches.
+  if (auth.loading) {
+    return (
+      <div className="signin-screen">
+        <div className="signin-card"><p className="muted">Loading…</p></div>
+      </div>
+    );
+  }
+  if (!auth.user) {
+    return (
+      <SignInScreen
+        onLogin={() => auth.login('#/app')}
+        configured={auth.configured}
+        mode={auth.mode}
+        error={auth.error}
+      />
+    );
+  }
+
   return (
     <div
       className={`app-shell ${leftCollapsed ? 'collapsed-left' : ''} ${rightCollapsed ? 'collapsed-right' : ''}`}
@@ -618,9 +661,36 @@ export default function Workspace() {
               <FileArchive size={11} /> Export .zip
             </button>
           )}
+          <button className="btn tiny" onClick={() => setShowGitHub(true)} title="Connect a GitHub repo and sync deliverables">
+            <Github size={11} /> {auth.user?.repo ? 'GitHub · ' + auth.user.repo.name : 'Connect GitHub'}
+          </button>
           <span className="muted" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Activity size={12} /> Chutes LLM
           </span>
+          <div className="user-menu-wrap">
+            <button className="user-chip" onClick={() => setShowUserMenu(v => !v)} title={auth.user.username}>
+              {auth.user.avatar_url
+                ? <img src={auth.user.avatar_url} alt="" className="user-avatar" />
+                : <span className="user-avatar fallback">{(auth.user.username || '?')[0].toUpperCase()}</span>}
+            </button>
+            {showUserMenu && (
+              <>
+                <div className="user-menu-backdrop" onClick={() => setShowUserMenu(false)} />
+                <div className="user-menu">
+                  <div className="user-menu-head">
+                    <div className="user-menu-name">{auth.user.name || auth.user.username}</div>
+                    <div className="user-menu-login muted">@{auth.user.username}</div>
+                  </div>
+                  <button className="user-menu-item" onClick={() => { setShowUserMenu(false); setShowGitHub(true); }}>
+                    <Github size={13} /> GitHub repo
+                  </button>
+                  <button className="user-menu-item" onClick={async () => { setShowUserMenu(false); await auth.logout(); }}>
+                    <LogOut size={13} /> Sign out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -753,6 +823,15 @@ export default function Workspace() {
           busy={quickSpecBusy}
           project={activeProject}
           documents={documents}
+        />
+      )}
+
+      {showGitHub && (
+        <GitHubModal
+          user={auth.user}
+          project={activeProject}
+          onClose={() => setShowGitHub(false)}
+          onUserChange={(u) => auth.setUser(u)}
         />
       )}
     </div>

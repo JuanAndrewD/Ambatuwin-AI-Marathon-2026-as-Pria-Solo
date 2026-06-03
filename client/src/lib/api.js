@@ -1,21 +1,43 @@
 // Thin fetch wrapper for the Express API.
 // Vite dev server proxies /api → http://localhost:3000 (see vite.config.js).
+//
+// `credentials: 'include'` is required so the cia.sid session cookie travels
+// with every request (and through the Vite proxy in dev).
 
 async function request(method, url, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  };
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
   if (!res.ok) {
     let err;
     try { err = (await res.json()).error; } catch { err = res.statusText; }
-    throw new Error(err || `HTTP ${res.status}`);
+    const e = new Error(err || `HTTP ${res.status}`);
+    e.status = res.status;
+    throw e;
   }
-  return res.json();
+  // 204 / empty body guard.
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
 }
 
 export const api = {
   catalog: () => request('GET', '/api/catalog'),
   regions: () => request('GET', '/api/regions'),
+
+  // ---- Auth ----
+  me: () => request('GET', '/api/auth/me'),
+  logout: () => request('POST', '/api/auth/logout'),
+  loginUrl: (returnTo = '#/app') => `/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`,
+
+  // ---- GitHub repo ----
+  listRepos: () => request('GET', '/api/github/repos'),
+  connectRepo: (payload) => request('POST', '/api/github/connect', payload),
+  disconnectRepo: () => request('POST', '/api/github/disconnect'),
+  syncProjectToGitHub: (pid, opts = {}) => request('POST', `/api/projects/${pid}/github/sync`, opts),
 
   listProjects: () => request('GET', '/api/projects'),
   getProject:   (id) => request('GET', `/api/projects/${id}`),
