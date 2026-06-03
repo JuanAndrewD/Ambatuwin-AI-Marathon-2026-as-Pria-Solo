@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { FileText, FileCode2, FileSpreadsheet, FilePlus2, Trash2, Pin, Eye, EyeOff, Sparkles, RefreshCw } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { FileText, FileCode2, FileSpreadsheet, FilePlus2, Trash2, Pin, Eye, EyeOff, Sparkles, RefreshCw, Upload, File as FileIcon, Presentation, Loader2 } from 'lucide-react';
 
 const TYPE_ICON = {
   brief:    FileText,
@@ -8,6 +8,9 @@ const TYPE_ICON = {
   proposal: FileText,
   notes:    FileText,
   csv:      FileSpreadsheet,
+  pdf:      FileIcon,
+  docx:     FileText,
+  pptx:     Presentation,
   default:  FileText,
 };
 
@@ -21,8 +24,11 @@ export default function DocumentsPane({
   onOpen, onCreate, onDelete, onToggleContext,
   onDraftBrief, isDrafting,
   onRefresh, lastSyncedAt, isSyncing,
+  onImportFiles, isImporting, importError, onDismissImportError,
 }) {
   const [showNew, setShowNew] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const uploadRef = useRef(null);
 
   function newDocSubmit(name, type) {
     if (!name.trim()) return;
@@ -30,9 +36,20 @@ export default function DocumentsPane({
     setShowNew(false);
   }
 
+  function onDrop(e) {
+    e.preventDefault(); e.stopPropagation();
+    setDragOver(false);
+    if (onImportFiles) onImportFiles(e.dataTransfer?.files);
+  }
+
   return (
-    <>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+    <div
+      className={`docs-pane-wrap ${dragOver ? 'dragover' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOver(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+      onDrop={onDrop}
+    >
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
         <button
           className="btn primary"
           style={{ flex: 1, justifyContent: 'center' }}
@@ -40,7 +57,35 @@ export default function DocumentsPane({
         >
           <FilePlus2 size={13} /> New document
         </button>
+        <button
+          className="btn"
+          style={{ justifyContent: 'center' }}
+          onClick={() => uploadRef.current?.click()}
+          disabled={isImporting}
+          title="Upload files (PDF, DOCX, PPTX, or text). Max 50 MB each."
+        >
+          {isImporting ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
+        </button>
+        <input
+          ref={uploadRef}
+          type="file"
+          multiple
+          accept=".pdf,.docx,.pptx,.md,.markdown,.txt,.text,.json,.yaml,.yml,.csv,.tsv,.log,.tf,.hcl,.toml,.ini,.xml,.html,.htm,.rtf"
+          style={{ display: 'none' }}
+          onChange={(e) => { onImportFiles?.(e.target.files); e.target.value = ''; }}
+        />
       </div>
+
+      {isImporting && (
+        <div className="upload-status" style={{ marginBottom: 8 }}>
+          <Loader2 size={12} className="spin" /> Importing & extracting text…
+        </div>
+      )}
+      {importError && (
+        <div className="upload-err" style={{ marginBottom: 8 }} onClick={onDismissImportError} title="Dismiss">
+          {importError}
+        </div>
+      )}
 
       <button
         className="btn tiny"
@@ -69,7 +114,7 @@ export default function DocumentsPane({
       <div className="docs-list">
         {documents.map(d => {
           const Icon = TYPE_ICON[d.type] || TYPE_ICON.default;
-          const sub = formatBytes(d.bytes) + ' · ' + (d.included_in_context ? 'in context' : 'excluded');
+          const sub = formatBytes(d.bytes) + ' · ' + (d.binary ? 'preview-only' : (d.included_in_context ? 'in context' : 'excluded'));
           const isActive = activeDocId === d.id;
           return (
             <div
@@ -82,6 +127,7 @@ export default function DocumentsPane({
                 <div className="dname" title={d.name}>
                   {d.pinned && <Pin size={10} style={{ marginRight: 4, color: 'var(--accent)' }} />}
                   {d.name}
+                  {d.binary && <span className="doc-badge" title="Unstructured — preview only">{ext(d.name).toUpperCase()}</span>}
                 </div>
                 <div className="dsub">{sub}</div>
               </div>
@@ -107,13 +153,23 @@ export default function DocumentsPane({
       </div>
 
       <div className="muted" style={{ fontSize: 11, marginTop: 12, lineHeight: 1.5 }}>
-        Documents marked "in context" are injected into every chat turn. The brief is pinned and cannot be deleted.
+        Drop files here or click upload to add PDF, DOCX, PPTX or text. Unstructured files are preview-only; their text still feeds the architect. Documents marked "in context" are injected into every chat turn.
       </div>
 
       {showNew && (
         <NewDocumentModal onCancel={() => setShowNew(false)} onSubmit={newDocSubmit} />
       )}
-    </>
+
+      {dragOver && (
+        <div className="docs-drop-overlay">
+          <div className="docs-drop-inner">
+            <Upload size={32} />
+            <div>Drop to add to this project</div>
+            <small>PDF · DOCX · PPTX · MD · TXT · CSV · JSON — max 50 MB</small>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

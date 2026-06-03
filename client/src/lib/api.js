@@ -24,6 +24,26 @@ async function request(method, url, body) {
   return text ? JSON.parse(text) : {};
 }
 
+// Send a raw binary body (File/Blob) — used for original-file uploads. We let
+// the browser set Content-Type from the Blob so the server records the MIME.
+async function requestRaw(method, url, blob) {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+    credentials: 'include',
+    body: blob,
+  });
+  if (!res.ok) {
+    let err;
+    try { err = (await res.json()).error; } catch { err = res.statusText; }
+    const e = new Error(err || `HTTP ${res.status}`);
+    e.status = res.status;
+    throw e;
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
+}
+
 export const api = {
   catalog: () => request('GET', '/api/catalog'),
   regions: () => request('GET', '/api/regions'),
@@ -54,6 +74,11 @@ export const api = {
   createDocument:   (pid, payload) => request('POST',   `/api/projects/${pid}/documents`, payload),
   updateDocument:   (pid, did, patch) => request('PATCH',  `/api/projects/${pid}/documents/${did}`, patch),
   deleteDocument:   (pid, did) => request('DELETE', `/api/projects/${pid}/documents/${did}`),
+  // Upload the original bytes of an unstructured/binary document. `file` is a
+  // browser File/Blob; sent raw so large files don't bloat a JSON body.
+  uploadDocumentRaw: (pid, did, file) => requestRaw('PUT', `/api/projects/${pid}/documents/${did}/raw`, file),
+  // URL to preview/download the stored original (e.g. for an <iframe> or link).
+  documentRawUrl:   (pid, did, download = false) => `/api/projects/${pid}/documents/${did}/raw${download ? '?download=1' : ''}`,
 
   draftBrief:       (pid) => request('POST', `/api/projects/${pid}/draft-brief`),
   refineBrief:      (pid, source) => request('POST', `/api/projects/${pid}/refine-brief`, { source }),

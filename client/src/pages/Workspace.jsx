@@ -13,6 +13,10 @@ import ResizeHandle from '../components/ResizeHandle';
 import QuickSpecModal from '../components/QuickSpecModal';
 import SignInScreen from '../components/SignInScreen';
 import GitHubModal from '../components/GitHubModal';
+import {
+  extractFile, isAllowed, isBinaryFormat, docTypeFor,
+  MAX_FILE_BYTES, MAX_FILES,
+} from '../lib/extract';
 import '../styles/app.css';
 
 const LEFT_TABS = [
@@ -73,6 +77,8 @@ export default function Workspace() {
   const [openDoc, setOpenDoc] = useState(null);     // hydrated copy of the active doc
   const [docDirty, setDocDirty] = useState(false);
   const [savingState, setSavingState] = useState('idle'); // idle | dirty | saving | saved | error
+  const [docImporting, setDocImporting] = useState(false);
+  const [docImportError, setDocImportError] = useState(null);
   const autosaveRef = useRef(null);
 
   useEffect(() => {
@@ -203,6 +209,59 @@ export default function Workspace() {
       await refreshActive();
       openDocument(document.id);
     } catch (e) { setError(e.message); }
+  }
+
+  // Import files dropped on / chosen in the Docs tab. Structured text becomes
+  // an editable document; unstructured formats (PDF/DOCX/PPTX) become a
+  // preview-only document whose extracted text feeds the architect and whose
+  // original bytes are uploaded for download + GitHub sync.
+  async function importDocFiles(fileList) {
+    if (!activeId) return;
+    const incoming = Array.from(fileList || []);
+    if (!incoming.length) return;
+    setDocImportError(null);
+    setDocImporting(true);
+    const errors = [];
+    let lastId = null;
+    try {
+      for (const f of incoming) {
+        if (!isAllowed(f.name)) { errors.push(`"${f.name}" — unsupported type`); continue; }
+        if (f.size > MAX_FILE_BYTES) { errors.push(`"${f.name}" exceeds 50 MB`); continue; }
+        try {
+          const extracted = await extractFile(f); // { name, bytes, content, binary, mime }
+          const binary = isBinaryFormat(f.name);
+          // Cap the extracted text we persist into the (polled) project row so
+          // a huge document doesn't bloat every refresh. The original bytes are
+          // preserved in full via the blob upload below.
+          const MAX_TEXT = 1_000_000; // ~1 MB of extracted text
+          let content = extracted.content;
+          if (content.length > MAX_TEXT) {
+            content = content.slice(0, MAX_TEXT) + '\n\n[truncated — open the original file to read the rest]';
+          }
+          const { document } = await api.createDocument(activeId, {
+            name: extracted.name,
+            type: docTypeFor(f.name),
+            content,
+            included_in_context: false,
+            binary,
+            mime: extracted.mime,
+            orig_bytes: extracted.bytes,
+          });
+          if (binary) {
+            // Store the original bytes so we can preview + push them to GitHub.
+            await api.uploadDocumentRaw(activeId, document.id, f);
+          }
+          lastId = document.id;
+        } catch (err) {
+          errors.push(`"${f.name}": ${err.message}`);
+        }
+      }
+      await refreshActive();
+      if (lastId) openDocument(lastId);
+    } finally {
+      setDocImporting(false);
+      if (errors.length) setDocImportError(errors.join(' · '));
+    }
   }
 
   async function deleteDoc(docId) {
@@ -593,9 +652,11 @@ export default function Workspace() {
   const documents = activeProject?.documents
     ? activeProject.documents.map(d => ({
         id: d.id, type: d.type, name: d.name,
-        bytes: new Blob([d.content || '']).size,
+        bytes: d.binary ? (d.orig_bytes || 0) : new Blob([d.content || '']).size,
         included_in_context: !!d.included_in_context,
         pinned: !!d.pinned,
+        binary: !!d.binary,
+        mime: d.mime || '',
         updated_at: d.updated_at,
       }))
     : [];
@@ -744,6 +805,10 @@ export default function Workspace() {
                   onRefresh={manualRefresh}
                   lastSyncedAt={lastSyncedAt}
                   isSyncing={isSyncing}
+                  onImportFiles={importDocFiles}
+                  isImporting={docImporting}
+                  importError={docImportError}
+                  onDismissImportError={() => setDocImportError(null)}
                 />
               ) : <div className="muted" style={{ fontSize: 12, padding: 12 }}>Select or create a project to manage its documents.</div>
             )}
@@ -774,6 +839,7 @@ export default function Workspace() {
       {openDoc ? (
         <DocumentEditor
           document={openDoc}
+          projectId={activeId}
           onChange={changeOpenDoc}
           onSave={saveOpenDoc}
           onClose={closeDocument}

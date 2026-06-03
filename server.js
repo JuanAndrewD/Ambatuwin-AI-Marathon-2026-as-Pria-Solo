@@ -344,6 +344,38 @@ app.delete('/api/projects/:id/documents/:docId', requireAuth, async (req, res) =
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ---- Binary document blobs (PDF/DOCX/PPTX originals) -----------------------
+// Two-step upload keeps the JSON body small: the client first POSTs the doc
+// metadata + extracted text (above), then PUTs the original file bytes here.
+const MAX_BLOB_BYTES = 50 * 1024 * 1024; // 50 MB — under GitHub's warn/block thresholds
+const rawBlob = express.raw({ type: '*/*', limit: '52mb' });
+
+app.put('/api/projects/:id/documents/:docId/raw', requireAuth, rawBlob, async (req, res) => {
+  try {
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (buf.length === 0) return res.status(400).json({ error: 'empty file body' });
+    if (buf.length > MAX_BLOB_BYTES) return res.status(413).json({ error: 'file exceeds 50 MB' });
+    const mime = String(req.get('content-type') || 'application/octet-stream').split(';')[0];
+    const ok = await projects.putDocumentBlob(req.session.userId, req.params.id, req.params.docId, { buffer: buf, mime });
+    if (!ok) return res.status(404).json({ error: 'project or document not found' });
+    res.json({ ok: true, bytes: buf.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/projects/:id/documents/:docId/raw', requireAuth, async (req, res) => {
+  try {
+    const doc = await projects.getDocument(req.session.userId, req.params.id, req.params.docId);
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    const blob = await projects.getDocumentBlob(req.session.userId, req.params.id, req.params.docId);
+    if (!blob) return res.status(404).json({ error: 'no original file stored for this document' });
+    const disposition = req.query.download ? 'attachment' : 'inline';
+    res.setHeader('Content-Type', blob.mime || doc.mime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(doc.name)}"`);
+    res.setHeader('Content-Length', blob.data.length);
+    res.send(blob.data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ---- GitHub: connect a repo to a project + push markdown -------------------
 // A repo is attached to a project (max one per project, zero allowed). The
 // signed-in user's OAuth token authenticates the Git API calls.
@@ -421,8 +453,8 @@ app.post('/api/projects/:id/github/sync', requireAuth, requireUserWithToken, asy
     const branch = String(req.body?.branch || repo.branch || repo.default_branch || 'main');
     const subdir = sanitizeDir(req.body?.path != null ? String(req.body.path) : slug(project.name));
 
-    const files = buildProjectFiles(project, subdir);
-    if (files.length === 0) return res.status(400).json({ error: 'project has no markdown to sync' });
+    const files = await buildProjectFiles(req.session.userId, project, subdir);
+    if (files.length === 0) return res.status(400).json({ error: 'project has no documents to sync' });
 
     const message = String(req.body?.message || `Sync "${project.name}" from Cloud Infrastructure Architect`);
     const result = await ghApi.pushFiles(req.ghUser.access_token, {
@@ -435,15 +467,16 @@ app.post('/api/projects/:id/github/sync', requireAuth, requireUserWithToken, asy
   }
 });
 
-// Collect every viable file for a project into a flat file list. Each document
-// keeps its own name + extension (defaulting to .md when it has none); the
-// generated deployment plan is included as markdown when present.
-function buildProjectFiles(project, subdir) {
+// Collect every viable file for a project into a flat file list. Text documents
+// push their (editable) content; unstructured/binary documents push their
+// ORIGINAL bytes fetched from document_blobs. The generated deployment plan is
+// included as markdown when present. Async because binaries hit the database.
+async function buildProjectFiles(userId, project, subdir) {
   const prefix = subdir ? subdir.replace(/\/+$/, '') + '/' : '';
   const files = [];
   const seen = new Set();
 
-  function add(rawName, content) {
+  function uniquePath(rawName) {
     let name = sanitizeFile(rawName || 'document');
     if (!/\.[a-z0-9]+$/i.test(name)) name += '.md'; // give extensionless files a sensible default
     let candidate = `${prefix}${name}`;
@@ -455,15 +488,33 @@ function buildProjectFiles(project, subdir) {
       candidate = `${prefix}${base}-${n++}${ext}`;
     }
     seen.add(candidate.toLowerCase());
-    files.push({ path: candidate, content: content || '' });
+    return candidate;
+  }
+
+  function addText(rawName, content) {
+    files.push({ path: uniquePath(rawName), content: content || '' });
+  }
+  function addBinary(rawName, buffer) {
+    files.push({ path: uniquePath(rawName), contentBase64: buffer.toString('base64') });
   }
 
   for (const d of (project.documents || [])) {
-    add(d.name, d.content);
+    if (d.binary) {
+      // Push the original file bytes. Fall back to the extracted text if the
+      // blob is somehow missing (e.g. an interrupted upload).
+      const blob = await projects.getDocumentBlob(userId, project.id, d.id);
+      if (blob && blob.data && blob.data.length) {
+        addBinary(d.name, blob.data);
+      } else if (d.content) {
+        addText(d.name.replace(/\.[^.]+$/, '') + '.txt', d.content);
+      }
+    } else {
+      addText(d.name, d.content);
+    }
   }
 
   if (project.last_plan?.markdown) {
-    add('deployment-plan.md', project.last_plan.markdown);
+    addText('deployment-plan.md', project.last_plan.markdown);
   }
 
   return files;

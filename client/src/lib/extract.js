@@ -56,6 +56,29 @@ function kindOf(name) {
   return 'text';
 }
 
+// Unstructured/binary formats are preview-only: we extract text for context
+// but the original file is never editable as plain text.
+export function isBinaryFormat(name) {
+  return kindOf(name) !== 'text';
+}
+
+const MIME_BY_KIND = {
+  pdf:  'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+// Map a filename to a project document `type` used by the Docs sidebar icon.
+export function docTypeFor(name) {
+  const l = lower(name);
+  if (l.endsWith('.pdf')) return 'pdf';
+  if (l.endsWith('.docx')) return 'docx';
+  if (l.endsWith('.pptx')) return 'pptx';
+  if (l.endsWith('.csv') || l.endsWith('.tsv')) return 'csv';
+  if (l.endsWith('.tf') || l.endsWith('.hcl')) return 'terraform';
+  return 'notes';
+}
+
 // Collapse runs of blank lines/whitespace so extracted text stays compact.
 function tidy(text) {
   return String(text || '')
@@ -179,7 +202,7 @@ async function extractPptx(file) {
 }
 
 // ---- public API ------------------------------------------------------------
-// Returns { name, bytes, content } or throws with a friendly message.
+// Returns { name, bytes, content, kind, binary, mime } or throws.
 export async function extractFile(file) {
   const kind = kindOf(file.name);
   let content;
@@ -192,5 +215,12 @@ export async function extractFile(file) {
   if (!content || !content.trim()) {
     throw new Error('no extractable text found (it may be scanned/image-only)');
   }
-  return { name: file.name, bytes: file.size, content };
+  return {
+    name: file.name,
+    bytes: file.size,
+    content,
+    kind,
+    binary: kind !== 'text',
+    mime: MIME_BY_KIND[kind] || file.type || 'text/plain',
+  };
 }
