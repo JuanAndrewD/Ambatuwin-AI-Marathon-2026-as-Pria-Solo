@@ -82,10 +82,18 @@ function assert(cond, msg) {
   assert(fresh.name === 'Alice renamed', 'name updated');
   assert(fresh.documents.find(d => d.type === 'brief').content === 'new brief text', 'brief doc mirrors project.brief');
 
-  console.log('9. Repo mapping on the user row');
-  const withRepo = await users.setRepo(a.id, { owner: 'alice', name: 'deliverables', full_name: 'alice/deliverables', branch: 'main' });
-  assert(withRepo.repo && withRepo.repo.full_name === 'alice/deliverables', 'repo mapping stored on user');
-  const cleared = await users.setRepo(a.id, null);
+  console.log('9. Repo mapping on the PROJECT row (max one per project)');
+  const withRepo = await projects.setRepo(a.id, pa.id, { owner: 'alice', name: 'deliverables', full_name: 'alice/deliverables', branch: 'main' });
+  assert(withRepo.repo && withRepo.repo.full_name === 'alice/deliverables', 'repo mapping stored on project');
+  // A second project for the same user can carry a different repo.
+  const pa2 = await projects.createProject(a.id, { name: 'Alice second', region: 'ap-southeast-1' });
+  const withRepo2 = await projects.setRepo(a.id, pa2.id, { owner: 'alice', name: 'other', full_name: 'alice/other', branch: 'main' });
+  assert(withRepo2.repo.full_name === 'alice/other', 'second project has its own repo (many repos per account)');
+  // Cross-user: bob cannot map a repo onto alice's project.
+  const stolenRepo = await projects.setRepo(b.id, pa.id, { owner: 'bob', name: 'x', full_name: 'bob/x', branch: 'main' });
+  assert(stolenRepo === null, 'bob cannot attach a repo to alice project');
+  // Clear it.
+  const cleared = await projects.setRepo(a.id, pa.id, null);
   assert(cleared.repo === null, 'repo mapping cleared');
 
   console.log('10. Cascade delete (deleting user removes their projects)');

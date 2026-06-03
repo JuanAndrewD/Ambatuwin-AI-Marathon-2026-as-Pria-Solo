@@ -2,11 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Github, FolderGit2, GitBranch, RefreshCw, Lock, Check, ExternalLink, Plus, UploadCloud } from 'lucide-react';
 import { api } from '../lib/api';
 
-// Connect / create a GitHub repository and sync the active project's markdown
-// deliverables into it. The connected-repo mapping lives on the user's row, so
-// it persists across sessions and projects.
-export default function GitHubModal({ user, project, onClose, onUserChange }) {
-  const [tab, setTab] = useState(user?.repo ? 'sync' : 'existing'); // existing | create | sync
+// Connect / create a GitHub repository for the ACTIVE PROJECT and sync that
+// project's files into it. The repo mapping lives on the project, so each
+// project has at most one repo (and may have none); one account can drive many
+// repos across its many projects. The signed-in user's token authenticates.
+export default function GitHubModal({ user, project, onClose, onProjectChange }) {
+  const repo = project?.repo || null;
+
+  const [tab, setTab] = useState(repo ? 'sync' : 'existing'); // existing | create | sync
   const [repos, setRepos] = useState(null);
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -27,12 +30,25 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
   const [syncMessage, setSyncMessage] = useState('');
   const [syncResult, setSyncResult] = useState(null);
 
-  const repo = user?.repo || null;
-
   useEffect(() => {
     if (tab === 'existing' && repos === null) loadRepos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  // No project open → nothing to connect a repo to.
+  if (!project) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal gh-modal" onClick={e => e.stopPropagation()}>
+          <h3><Github size={18} style={{ verticalAlign: '-3px', marginRight: 6 }} /> GitHub</h3>
+          <p className="muted">Open or create a project first — a repository is attached to a project.</p>
+          <div className="modal actions" style={{ marginTop: 16 }}>
+            <button className="btn ghost" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   async function loadRepos() {
     setLoadingRepos(true); setError(null);
@@ -49,11 +65,11 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
     if (!r) return;
     setBusy(true); setError(null);
     try {
-      const { user: updated } = await api.connectRepo({
+      const { project: updated } = await api.connectProjectRepo(project.id, {
         mode: 'existing', owner: r.owner, name: r.name, branch: branch || r.default_branch,
       });
-      onUserChange?.(updated);
-      setNotice(`Connected to ${updated.repo.full_name}`);
+      onProjectChange?.(updated);
+      setNotice(`Connected ${updated.repo.full_name} to "${updated.name}"`);
       setTab('sync');
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -63,10 +79,10 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
     if (!newName.trim()) { setError('Repository name is required.'); return; }
     setBusy(true); setError(null);
     try {
-      const { user: updated } = await api.connectRepo({
+      const { project: updated } = await api.connectProjectRepo(project.id, {
         mode: 'create', name: newName.trim(), private: newPrivate, description: newDesc,
       });
-      onUserChange?.(updated);
+      onProjectChange?.(updated);
       setNotice(`Created and connected ${updated.repo.full_name}`);
       setTab('sync');
     } catch (e) { setError(e.message); }
@@ -76,9 +92,9 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
   async function disconnect() {
     setBusy(true); setError(null);
     try {
-      const { user: updated } = await api.disconnectRepo();
-      onUserChange?.(updated);
-      setNotice('Repository disconnected.');
+      const { project: updated } = await api.disconnectProjectRepo(project.id);
+      onProjectChange?.(updated);
+      setNotice('Repository disconnected from this project.');
       setTab('existing');
       setSyncResult(null);
     } catch (e) { setError(e.message); }
@@ -86,7 +102,6 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
   }
 
   async function runSync() {
-    if (!project) { setError('Open a project first.'); return; }
     setBusy(true); setError(null); setSyncResult(null);
     try {
       const { result, files } = await api.syncProjectToGitHub(project.id, {
@@ -105,8 +120,9 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
       <div className="modal gh-modal" onClick={e => e.stopPropagation()}>
         <h3><Github size={18} style={{ verticalAlign: '-3px', marginRight: 6 }} /> GitHub</h3>
         <p className="muted">
-          Connect a repository to your account, then push this project's markdown
-          deliverables straight from the app — no zip, no local git.
+          Attach a repository to <strong>{project.name}</strong>, then push every
+          file in the project straight from the app — no zip, no local git.
+          Each project has its own repo (or none).
         </p>
 
         {repo && (
@@ -152,7 +168,7 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
               <input className="input" placeholder="defaults to the repo's default branch" value={branch} onChange={e => setBranch(e.target.value)} />
               <div className="gh-actions">
                 <button className="btn primary" onClick={connectExisting} disabled={busy || !selected}>
-                  <Check size={14} /> Connect
+                  <Check size={14} /> Connect to project
                 </button>
               </div>
             </div>
@@ -179,15 +195,13 @@ export default function GitHubModal({ user, project, onClose, onUserChange }) {
           {tab === 'sync' && (
             <div className="gh-section">
               {!repo ? (
-                <div className="muted" style={{ fontSize: 12 }}>Connect a repository first.</div>
-              ) : !project ? (
-                <div className="muted" style={{ fontSize: 12 }}>Open a project to sync its documents.</div>
+                <div className="muted" style={{ fontSize: 12 }}>Connect a repository to this project first.</div>
               ) : (
                 <>
                   <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-                    Pushes every document in <strong>{project.name}</strong>
-                    {project.last_plan ? ' plus the generated deployment plan' : ''} as
-                    markdown files via the Git Trees API.
+                    Pushes every file in <strong>{project.name}</strong>
+                    {project.last_plan ? ' plus the generated deployment plan' : ''} to
+                    <strong> {repo.full_name}</strong> via the Git Trees API.
                   </div>
                   <label className="gh-label">Target folder in repo (optional)</label>
                   <input className="input" placeholder={defaultDir(project.name)} value={syncPath} onChange={e => setSyncPath(e.target.value)} />

@@ -41,11 +41,11 @@ async function j(method, p, body) {
   const create = await j('POST', '/api/projects', { name: 'nope' });
   assert(create.status === 401, 'POST /api/projects → 401 without session');
 
-  console.log('4. GitHub routes require auth');
+  console.log('4. GitHub repo listing requires auth');
   const repos = await j('GET', '/api/github/repos');
   assert(repos.status === 401, 'GET /api/github/repos → 401 without session');
-  const connect = await j('POST', '/api/github/connect', { mode: 'existing', owner: 'x', name: 'y' });
-  assert(connect.status === 401, 'POST /api/github/connect → 401 without session');
+  const connect = await j('POST', '/api/projects/nope/github/connect', { mode: 'existing', owner: 'x', name: 'y' });
+  assert(connect.status === 401, 'POST /api/projects/:id/github/connect → 401 without session');
 
   console.log('\n✅ auth HTTP smoke complete');
 })().catch(e => { console.error('FAIL:', e.message); process.exit(1); });

@@ -33,10 +33,10 @@ export const api = {
   logout: () => request('POST', '/api/auth/logout'),
   loginUrl: (returnTo = '#/app') => `/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`,
 
-  // ---- GitHub repo ----
+  // ---- GitHub repo (repo is attached to a project) ----
   listRepos: () => request('GET', '/api/github/repos'),
-  connectRepo: (payload) => request('POST', '/api/github/connect', payload),
-  disconnectRepo: () => request('POST', '/api/github/disconnect'),
+  connectProjectRepo: (pid, payload) => request('POST', `/api/projects/${pid}/github/connect`, payload),
+  disconnectProjectRepo: (pid) => request('DELETE', `/api/projects/${pid}/github/repo`),
   syncProjectToGitHub: (pid, opts = {}) => request('POST', `/api/projects/${pid}/github/sync`, opts),
 
   listProjects: () => request('GET', '/api/projects'),

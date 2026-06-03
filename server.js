@@ -342,16 +342,76 @@ app.delete('/api/projects/:id/documents/:docId', requireAuth, async (req, res) =
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ---- GitHub sync: push project markdown via the Git Trees API --------------
+// ---- GitHub: connect a repo to a project + push markdown -------------------
+// A repo is attached to a project (max one per project, zero allowed). The
+// signed-in user's OAuth token authenticates the Git API calls.
 
+// Connect an existing repo OR create a new one, then store the mapping on the
+// project row. Body: { mode:'existing', owner, name, branch? }
+//                  | { mode:'create',   name, private?, description?, branch? }
+app.post('/api/projects/:id/github/connect', requireAuth, requireUserWithToken, async (req, res) => {
+  try {
+    const project = await projects.getProject(req.session.userId, req.params.id);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+
+    const { mode } = req.body || {};
+    let repoInfo;
+    if (mode === 'create') {
+      const name = String(req.body?.name || '').trim();
+      if (!name) return res.status(400).json({ error: 'repository name is required' });
+      repoInfo = await ghApi.createRepo(req.ghUser.access_token, {
+        name,
+        description: String(req.body?.description || 'Architecture deliverables — Cloud Infrastructure Architect'),
+        private: req.body?.private !== false,
+        auto_init: true,
+      });
+    } else {
+      const owner = String(req.body?.owner || '').trim();
+      const name = String(req.body?.name || '').trim();
+      if (!owner || !name) return res.status(400).json({ error: 'owner and name are required' });
+      repoInfo = await ghApi.getRepo(req.ghUser.access_token, owner, name);
+    }
+
+    const branch = String(req.body?.branch || '').trim() || repoInfo.default_branch || 'main';
+    const mapping = {
+      owner: repoInfo.owner.login,
+      name: repoInfo.name,
+      full_name: repoInfo.full_name,
+      branch,
+      default_branch: repoInfo.default_branch,
+      html_url: repoInfo.html_url,
+      private: repoInfo.private,
+      connected_at: new Date().toISOString(),
+    };
+    const updated = await projects.setRepo(req.session.userId, project.id, mapping);
+    res.json({ project: updated, repo: mapping });
+  } catch (err) {
+    console.error('[github connect] error:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Disconnect the repo from a project (the repo itself is left untouched).
+app.delete('/api/projects/:id/github/repo', requireAuth, async (req, res) => {
+  try {
+    const project = await projects.getProject(req.session.userId, req.params.id);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+    const updated = await projects.setRepo(req.session.userId, project.id, null);
+    res.json({ project: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Push the project's markdown via the Git Trees API into its connected repo.
 app.post('/api/projects/:id/github/sync', requireAuth, requireUserWithToken, async (req, res) => {
   try {
     const project = await projects.getProject(req.session.userId, req.params.id);
     if (!project) return res.status(404).json({ error: 'project not found' });
 
-    const repo = req.ghUser.repo;
+    const repo = project.repo;
     if (!repo || !repo.owner || !repo.name) {
-      return res.status(400).json({ error: 'no repository connected; connect one first' });
+      return res.status(400).json({ error: 'no repository connected to this project; connect one first' });
     }
 
     // Allow a per-sync subfolder + branch override; default to the connected
@@ -373,32 +433,35 @@ app.post('/api/projects/:id/github/sync', requireAuth, requireUserWithToken, asy
   }
 });
 
-// Collect every markdown deliverable for a project into a flat file list.
-// Documents keep their own names; the generated plan is included when present.
+// Collect every viable file for a project into a flat file list. Each document
+// keeps its own name + extension (defaulting to .md when it has none); the
+// generated deployment plan is included as markdown when present.
 function buildProjectFiles(project, subdir) {
   const prefix = subdir ? subdir.replace(/\/+$/, '') + '/' : '';
   const files = [];
   const seen = new Set();
 
-  for (const d of (project.documents || [])) {
-    let name = sanitizeFile(d.name || 'document.md');
-    if (!/\.md$/i.test(name)) name += '.md';
-    // De-dupe identical names.
+  function add(rawName, content) {
+    let name = sanitizeFile(rawName || 'document');
+    if (!/\.[a-z0-9]+$/i.test(name)) name += '.md'; // give extensionless files a sensible default
     let candidate = `${prefix}${name}`;
     let n = 1;
     while (seen.has(candidate.toLowerCase())) {
-      candidate = `${prefix}${name.replace(/\.md$/i, '')}-${n++}.md`;
+      const dot = name.lastIndexOf('.');
+      const base = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : '';
+      candidate = `${prefix}${base}-${n++}${ext}`;
     }
     seen.add(candidate.toLowerCase());
-    files.push({ path: candidate, content: d.content || '' });
+    files.push({ path: candidate, content: content || '' });
+  }
+
+  for (const d of (project.documents || [])) {
+    add(d.name, d.content);
   }
 
   if (project.last_plan?.markdown) {
-    let candidate = `${prefix}deployment-plan.md`;
-    if (!seen.has(candidate.toLowerCase())) {
-      seen.add(candidate.toLowerCase());
-      files.push({ path: candidate, content: project.last_plan.markdown });
-    }
+    add('deployment-plan.md', project.last_plan.markdown);
   }
 
   return files;

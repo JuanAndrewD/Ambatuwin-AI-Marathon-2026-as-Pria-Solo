@@ -661,8 +661,8 @@ export default function Workspace() {
               <FileArchive size={11} /> Export .zip
             </button>
           )}
-          <button className="btn tiny" onClick={() => setShowGitHub(true)} title="Connect a GitHub repo and sync deliverables">
-            <Github size={11} /> {auth.user?.repo ? 'GitHub · ' + auth.user.repo.name : 'Connect GitHub'}
+          <button className="btn tiny" onClick={() => setShowGitHub(true)} title="Attach a GitHub repo to this project and sync files" disabled={!activeProject}>
+            <Github size={11} /> {activeProject?.repo ? 'GitHub · ' + activeProject.repo.name : 'Connect GitHub'}
           </button>
           <span className="muted" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Activity size={12} /> Chutes LLM
@@ -831,7 +831,10 @@ export default function Workspace() {
           user={auth.user}
           project={activeProject}
           onClose={() => setShowGitHub(false)}
-          onUserChange={(u) => auth.setUser(u)}
+          onProjectChange={(p) => {
+            setActiveProject(prev => mergeActiveProject(prev, p));
+            refreshProjectsList();
+          }}
         />
       )}
     </div>
@@ -885,7 +888,10 @@ function ProjectsContent({ projects, activeId, onSelect, onCreate, onDelete }) {
             <div className="pdot" />
             <div className="meta">
               <div className="pname">{p.name}</div>
-              <div className="psub">{p.region} · {p.chat_count} msgs · {p.has_plan ? 'plan ready' : 'no plan'}</div>
+              <div className="psub">
+                {p.region} · {p.chat_count} msgs · {p.has_plan ? 'plan ready' : 'no plan'}
+                {p.has_repo && <> · <Github size={9} style={{ verticalAlign: '-1px' }} /> {p.repo_full_name}</>}
+              </div>
             </div>
             <button className="pdel" onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${p.name}"?`)) onDelete(p.id); }} title="Delete">×</button>
           </div>

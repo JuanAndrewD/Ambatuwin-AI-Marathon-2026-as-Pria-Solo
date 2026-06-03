@@ -138,12 +138,14 @@ function req(method, path, { body, cookie } = {}) {
   const pid = proj.body.project.id;
   await req('POST', `/api/projects/${pid}/documents`, { cookie, body: { name: 'notes.md', type: 'notes', content: '# Notes\nbody' } });
 
-  console.log('5. Connect an existing repo (mapping saved on user row)');
-  const conn = await req('POST', '/api/github/connect', { cookie, body: { mode: 'existing', owner: 'octodev', name: 'deliverables' } });
+  console.log('5. Connect an existing repo to the PROJECT (mapping saved on project row)');
+  const conn = await req('POST', `/api/projects/${pid}/github/connect`, { cookie, body: { mode: 'existing', owner: 'octodev', name: 'deliverables' } });
   assert(conn.status === 200, 'connect returns 200');
   assert(conn.body.repo.full_name === 'octodev/deliverables', 'repo mapping returned');
+  const proj2 = await req('GET', `/api/projects/${pid}`, { cookie });
+  assert(proj2.body.project.repo && proj2.body.project.repo.full_name === 'octodev/deliverables', 'repo mapping persisted on the project');
   const me2 = await req('GET', '/api/auth/me', { cookie });
-  assert(me2.body.user.repo && me2.body.user.repo.full_name === 'octodev/deliverables', 'repo mapping persisted on user');
+  assert(me2.body.user.repo === undefined, 'repo is NOT stored on the user');
 
   console.log('6. Sync project markdown via Git Trees API (mocked)');
   const sync = await req('POST', `/api/projects/${pid}/github/sync`, { cookie, body: { path: 'gh-flow' } });
@@ -152,16 +154,34 @@ function req(method, path, { body, cookie } = {}) {
   assert(sync.body.files.some(f => /gh-flow\/.+\.md$/.test(f)), 'markdown files pushed under target dir');
   assert(Object.keys(fakeRepoFiles).length >= 2, `blobs/tree built (${Object.keys(fakeRepoFiles).join(', ')})`);
 
-  console.log('7. Sync without a session is rejected');
-  const noauth = await req('POST', `/api/projects/${pid}/github/sync`, { body: {} });
+  console.log('7. Second project for the same user → its own repo (many repos per account)');
+  const proj2b = await req('POST', '/api/projects', { cookie, body: { name: 'Second', region: 'ap-southeast-1' } });
+  const pid2 = proj2b.body.project.id;
+  const conn2 = await req('POST', `/api/projects/${pid2}/github/connect`, { cookie, body: { mode: 'existing', owner: 'octodev', name: 'deliverables' } });
+  assert(conn2.status === 200, 'second project connects its own repo');
+  // First project's repo is unchanged + independent.
+  const p1again = await req('GET', `/api/projects/${pid}`, { cookie });
+  assert(p1again.body.project.repo.full_name === 'octodev/deliverables', 'first project repo still intact');
+
+  console.log('8. Disconnect repo from the first project (other project unaffected)');
+  const disc = await req('DELETE', `/api/projects/${pid}/github/repo`, { cookie });
+  assert(disc.status === 200 && disc.body.project.repo === null, 'first project repo cleared');
+  const p2still = await req('GET', `/api/projects/${pid2}`, { cookie });
+  assert(p2still.body.project.repo && p2still.body.project.repo.full_name === 'octodev/deliverables', 'second project repo still attached');
+  // Sync now fails for the disconnected project.
+  const syncFail = await req('POST', `/api/projects/${pid}/github/sync`, { cookie, body: {} });
+  assert(syncFail.status === 400, 'sync rejected when project has no repo');
+
+  console.log('9. Sync without a session is rejected');
+  const noauth = await req('POST', `/api/projects/${pid2}/github/sync`, { body: {} });
   assert(noauth.status === 401, 'sync requires a session');
 
-  console.log('8. Logout clears the session');
+  console.log('10. Logout clears the session');
   await req('POST', '/api/auth/logout', { cookie });
   const meAfter = await req('GET', '/api/auth/me', { cookie });
   assert(meAfter.body.user === null, 'session destroyed after logout');
 
-  console.log('\n9. Cleanup');
+  console.log('\n11. Cleanup');
   await db.query('DELETE FROM users WHERE github_id = $1', [4242]);
   await new Promise(r => server.close(r));
   await db.pool.end();

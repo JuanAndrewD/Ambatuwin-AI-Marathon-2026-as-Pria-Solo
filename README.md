@@ -57,9 +57,9 @@ never sees a price.
 
 - **Accounts** — sign in with GitHub. Each user gets an isolated session and
   their own private set of projects, stored in PostgreSQL.
-- **GitHub sync** — connect an existing repo or create a new one from the app,
-  then push every project document (and the generated plan) straight to the
-  repo as markdown via the Git Trees API — no zip, no local git.
+- **GitHub sync** — attach a repo to a project (each project gets its own, or
+  none), then push every file in the project (and the generated plan) straight
+  to the repo as files via the Git Trees API — no zip, no local git.
 - **Projects** — name, organise, and switch between architecture engagements. Each project tracks its own brief, region, allowed services, chat history, generated plans, and document set.
 - **Docs** — every project has a pinned **Requirements brief** and any number of additional markdown / Terraform / notes files. Toggle the "eye" on each doc to inject it into chat context. Reference docs in chat with `#docname` (Kiro-style `#File`).
 - **Resources** — every AWS service is a togglable source. The architect is locked to the enabled subset.
@@ -250,8 +250,8 @@ old `data/projects.json` file:
 
 | Table | Purpose | Owner |
 |---|---|---|
-| `users` | One row per GitHub account that signs in: `github_id`, `username`, profile, the OAuth `access_token` (used for Git API calls), and the connected-repository mapping (`repo` JSONB). | The running app |
-| `projects` | One row per architecture engagement, tied to a user via a `user_id` foreign key. `documents`, `chat`, and `last_plan` are JSONB columns so the shape matches the old JSON tree. | The running app |
+| `users` | One row per GitHub account that signs in: `github_id`, `username`, profile, and the OAuth `access_token` (used for Git API calls). | The running app |
+| `projects` | One row per architecture engagement, tied to a user via a `user_id` foreign key. `documents`, `chat`, and `last_plan` are JSONB columns; `repo` JSONB holds the connected repository for that project (at most one per project, zero allowed). | The running app |
 
 The only read-only file left is `data/aws-catalog.json` (service catalog,
 regions, prices, compliance frameworks — updated by hand when AWS publishes
@@ -291,7 +291,10 @@ which 401s when there is no `req.session.userId`.
 
 #### Connecting a repository
 
-`POST /api/github/connect` works in two modes:
+A repository is attached to a **project**, not to the account — each project
+has at most one repo (and may have none), while one account can drive many
+repos across its many projects. `POST /api/projects/:id/github/connect` works
+in two modes:
 
 - `{ mode: 'existing', owner, name, branch? }` — looks the repo up and records
   the mapping.
@@ -299,20 +302,24 @@ which 401s when there is no `req.session.userId`.
   the user (`auto_init: true`) and records the mapping.
 
 Either way, instead of dumping to a generic directory, this endpoint
-**registers the repository mapping inside the user's specific database row**
-(`users.repo` JSONB: `owner`, `name`, `branch`, `html_url`, …).
+**registers the repository mapping on the project's own database row**
+(`projects.repo` JSONB: `owner`, `name`, `branch`, `html_url`, …).
+`DELETE /api/projects/:id/github/repo` detaches it (the repo itself is left
+untouched).
 
 #### Syncing markdown without zip or local git
 
-`POST /api/projects/:id/github/sync` pushes every project document (plus the
-generated `deployment-plan.md` when present) into the connected repo. To send
-files without zipping them or installing Git on Render, it uses the low-level
-**Git Trees API** to build a file-structure footprint and move the target
-branch in a single backend flow (`lib/github-api.pushFiles`):
+`POST /api/projects/:id/github/sync` pushes every file in the project (each
+document keeps its own name/extension, extensionless files default to `.md`)
+plus the generated `deployment-plan.md` when present, into the project's
+connected repo. To send files without zipping them or installing Git on
+Render, it uses the low-level **Git Trees API** to build a file-structure
+footprint and move the target branch in a single backend flow
+(`lib/github-api.pushFiles`):
 
 ```
 GET   /repos/:o/:r/git/ref/heads/:branch   → current commit sha (base tree)
-POST  /repos/:o/:r/git/blobs        (×N)   → one blob per markdown file
+POST  /repos/:o/:r/git/blobs        (×N)   → one blob per file
 POST  /repos/:o/:r/git/trees               → assemble the tree (on base_tree)
 POST  /repos/:o/:r/git/commits             → new commit
 PATCH /repos/:o/:r/git/refs/heads/:branch  → move the branch to the new commit
@@ -356,6 +363,15 @@ and `POST`ing a fresh ref instead.
     "compliance": { "ok": true, "passes": [], "issues": [] },
     "region": { "code": "ap-southeast-5", "name": "...", "country": "..." },
     "markdown": "# ☁️ AWS Cloud Infrastructure Deployment Plan\n…"
+  },
+  "repo": {                         // connected GitHub repo (or null) — max one
+    "owner": "octodev",
+    "name": "deliverables",
+    "full_name": "octodev/deliverables",
+    "branch": "main",
+    "html_url": "https://github.com/octodev/deliverables",
+    "private": true,
+    "connected_at": "…"
   },
   "created_at": "…",
   "updated_at": "…"
@@ -439,12 +455,12 @@ Putting it all together, here's what happens when a user types
 │  ├─ architect.js              LLM orchestrator: design / chat / draft / spec
 │  ├─ chutes.js                 Chutes API client + JSON extraction
 │  ├─ db.js                     PostgreSQL pool + schema bootstrap (users, projects)
-│  ├─ users.js                  User data-access (GitHub upsert, repo mapping)
-│  ├─ projects.js               PostgreSQL project + document CRUD (user-scoped)
+│  ├─ users.js                  User data-access (GitHub upsert, token)
+│  ├─ projects.js               PostgreSQL project + document CRUD + repo mapping (user-scoped)
 │  ├─ github-config.js          OAuth credential selection (local vs production)
 │  ├─ github-api.js             GitHub REST + Git Trees push (no zip / no git)
 │  ├─ routes-auth.js            OAuth login / callback / logout / me
-│  ├─ routes-github.js          Repo list / connect / disconnect
+│  ├─ routes-github.js          Account repo listing (connect/sync live per-project in server.js)
 │  └─ rate-limit.js             Sliding-window per-IP rate limiter
 ├─ client/
 │  ├─ index.html                Vite entry
@@ -697,9 +713,9 @@ authenticated session** and return `401` otherwise. Catalog routes are public.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET`  | `/api/github/repos` | List the signed-in user's repositories |
-| `POST` | `/api/github/connect` | Connect existing `{ mode:'existing', owner, name, branch? }` or create `{ mode:'create', name, private?, description? }`; stores the mapping on the user row |
-| `POST` | `/api/github/disconnect` | Clear the connected-repo mapping |
-| `POST` | `/api/projects/:id/github/sync` | Push the project's markdown (+ plan) to the repo via the Git Trees API; body: `{ path?, branch?, message? }` |
+| `POST` | `/api/projects/:id/github/connect` | Attach a repo to the project — existing `{ mode:'existing', owner, name, branch? }` or create `{ mode:'create', name, private?, description? }`; stores the mapping on the project row |
+| `DELETE` | `/api/projects/:id/github/repo` | Detach the repo from the project |
+| `POST` | `/api/projects/:id/github/sync` | Push the project's files (+ plan) to its repo via the Git Trees API; body: `{ path?, branch?, message? }` |
 
 ### Catalog
 
