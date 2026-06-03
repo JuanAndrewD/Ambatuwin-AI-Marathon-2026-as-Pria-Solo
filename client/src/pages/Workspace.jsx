@@ -47,6 +47,7 @@ export default function Workspace() {
   const [error, setError] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [authError, setAuthError] = useState(null);
   const [paneWidths, setPaneWidths] = useState(() => {
     try { return JSON.parse(localStorage.getItem(PANE_KEY) || ''); } catch {}
     return { left: 280, right: 360 };
@@ -417,7 +418,9 @@ export default function Workspace() {
   useEffect(() => {
     const m = (window.location.hash || '').match(/auth_error=([^&]+)/);
     if (m) {
-      setError('GitHub sign-in failed: ' + decodeURIComponent(m[1]));
+      const msg = 'GitHub sign-in failed: ' + decodeURIComponent(m[1]);
+      setError(msg);
+      setAuthError(msg); // also shown on the sign-in screen (rendered before the toast)
       // Strip the param so it doesn't persist on refresh.
       window.history.replaceState(null, '', window.location.pathname + '#/app');
     }
@@ -613,7 +616,7 @@ export default function Workspace() {
         onLogin={() => auth.login('#/app')}
         configured={auth.configured}
         mode={auth.mode}
-        error={auth.error}
+        error={authError || auth.error}
       />
     );
   }
