@@ -68,6 +68,7 @@ export const api = {
 
   chat: (id, message, attachments) => request('POST', `/api/projects/${id}/chat`, { message, attachments }),
   designForProject: (id, opts = {}) => request('POST', `/api/projects/${id}/design`, opts),
+  planToChat: (id) => request('POST', `/api/projects/${id}/plan-to-chat`),
 
   listDocuments:    (pid) => request('GET',    `/api/projects/${pid}/documents`),
   getDocument:      (pid, did) => request('GET',    `/api/projects/${pid}/documents/${did}`),

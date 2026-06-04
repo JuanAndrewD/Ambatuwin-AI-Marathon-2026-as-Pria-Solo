@@ -24,7 +24,7 @@ function fmtLimit(b) {
   return b >= MB ? `${Math.round(b / MB)} MB` : `${Math.round(b / 1024)} KB`;
 }
 
-export default function ChatPane({ project, regions, isThinking, onSend, onClearChat, onUpdateProject }) {
+export default function ChatPane({ project, regions, isThinking, onSend, onClearChat, onUpdateProject, scrollToPlanNonce = 0 }) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState([]); // [{ name, bytes, content }]
   const [dragOver, setDragOver] = useState(false);
@@ -33,6 +33,7 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
   const streamRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const msgRefs = useRef({}); // index -> message DOM node (for scroll-to-plan)
   const [showScrollFab, setShowScrollFab] = useState(false);
   const stickToBottomRef = useRef(true);
 
@@ -59,6 +60,29 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
   useEffect(() => {
     if (streamRef.current) postProcessMermaid(streamRef.current);
   }, [project?.chat]);
+
+  // "View plan in chat" — scroll to the TOP of the most recent persisted plan
+  // document message. Bumping the nonce (even when the plan message is already
+  // the last one) re-triggers the scroll.
+  useEffect(() => {
+    if (!scrollToPlanNonce) return;
+    const chat = project?.chat || [];
+    let target = -1;
+    for (let i = chat.length - 1; i >= 0; i--) {
+      if (chat[i]?.meta?.kind === 'plan-document') { target = i; break; }
+    }
+    if (target === -1) return;
+    // Defer until after the message list has painted.
+    requestAnimationFrame(() => {
+      const el = msgRefs.current[target];
+      const stream = streamRef.current;
+      if (el && stream) {
+        stickToBottomRef.current = false;
+        // Align the top of the plan message with the top of the scroll area.
+        stream.scrollTo({ top: el.offsetTop - 8, behavior: 'smooth' });
+      }
+    });
+  }, [scrollToPlanNonce, project?.chat?.length]);
 
   function clearAttachments() { setAttachments([]); setUploadError(null); }
 
@@ -162,7 +186,15 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
         ) : (
           <>
             {messages.map((m, i) => (
-              <Message key={i} role={m.role} content={m.content} error={m.error} attachments={m.attachments} />
+              <Message
+                key={i}
+                ref={(node) => { if (node) msgRefs.current[i] = node; else delete msgRefs.current[i]; }}
+                role={m.role}
+                content={m.content}
+                error={m.error}
+                attachments={m.attachments}
+                isPlan={m.meta?.kind === 'plan-document'}
+              />
             ))}
             {isThinking && (
               <div className="msg assistant fade-in">
@@ -306,15 +338,15 @@ function Welcome({ project, regions, onSuggest, onUpdateProject }) {
   );
 }
 
-function Message({ role, content, error, attachments }) {
-  const ref = useRef(null);
+const Message = React.forwardRef(function Message({ role, content, error, attachments, isPlan }, outerRef) {
+  const contentRef = useRef(null);
   useEffect(() => {
-    if (ref.current) postProcessMermaid(ref.current);
+    if (contentRef.current) postProcessMermaid(contentRef.current);
   }, [content]);
 
   if (role === 'user') {
     return (
-      <div className="msg user fade-in">
+      <div className="msg user fade-in" ref={outerRef}>
         <div className="avatar">You</div>
         <div className="bubble">
           <div className="name">You</div>
@@ -335,16 +367,16 @@ function Message({ role, content, error, attachments }) {
     );
   }
   return (
-    <div className={`msg assistant fade-in ${error ? 'error' : ''}`}>
+    <div className={`msg assistant fade-in ${error ? 'error' : ''} ${isPlan ? 'plan-msg' : ''}`} ref={outerRef}>
       <div className="avatar"><Sparkles size={14} /></div>
       <div className="bubble">
-        <div className="name">Cloud Architect</div>
+        <div className="name">Cloud Architect{isPlan ? ' · Deployment plan' : ''}</div>
         <div
           className="content"
-          ref={ref}
+          ref={contentRef}
           dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
         />
       </div>
     </div>
   );
-}
+});

@@ -692,16 +692,39 @@ app.post('/api/projects/:id/design', requireAuth, designRateLimit, async (req, r
       allowedServices: project.enabled_services,
     });
     await projects.updateProject(req.session.userId, project.id, { brief, last_plan: result });
-    // also drop a trace into the chat so the conversation reflects the action
+    // Persist the FULL plan markdown as an assistant turn so it shows in chat
+    // by default and survives the client's polling refresh. Tagged so the
+    // "View plan in chat" button can locate + scroll to it.
     await projects.appendChat(req.session.userId, project.id, {
       role: 'assistant',
-      content: `📐 **Generated deployment plan** — ${result.priced.items.length} components, **$${result.priced.total.toFixed(2)}/month** in \`${result.region.code}\`. Check the **Studio** panel for the full document, diagram, and itemized bill.`,
-      meta: { kind: 'plan-generated', total: result.priced.total },
+      content: result.markdown,
+      meta: { kind: 'plan-document', total: result.priced.total, components: result.priced.items.length, region: result.region.code },
     });
     res.json({ result });
   } catch (err) {
     console.error('[design] error:', err);
     res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// Re-post the current plan into chat (used by the Studio "View plan in chat"
+// button). Persists the full plan markdown as a fresh assistant turn so it
+// survives polling and the client can scroll to it. Returns the appended entry.
+app.post('/api/projects/:id/plan-to-chat', requireAuth, async (req, res) => {
+  try {
+    const project = await projects.getProject(req.session.userId, req.params.id);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+    const markdown = project.last_plan?.markdown;
+    if (!markdown) return res.status(400).json({ error: 'no plan generated yet' });
+    const entry = await projects.appendChat(req.session.userId, project.id, {
+      role: 'assistant',
+      content: markdown,
+      meta: { kind: 'plan-document', total: project.last_plan?.priced?.total, region: project.last_plan?.region?.code },
+    });
+    res.json({ entry });
+  } catch (err) {
+    console.error('[plan-to-chat] error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -735,11 +758,21 @@ if (require.main === module) {
   const PORT = process.env.PORT || 3000;
   db.init()
     .then(() => {
-      app.listen(PORT, () => {
+      const server = app.listen(PORT, () => {
         console.log(`☁️  Cloud Infrastructure Architect running at http://localhost:${PORT}`);
         console.log(`    Serving static from: ${staticDir}`);
         console.log(`    GitHub OAuth mode: ${require('./lib/github-config').MODE}`);
       });
+      // Plan generation can legitimately take 10+ minutes on shared LLM infra.
+      // Node's defaults (requestTimeout 300s, headersTimeout 60s, keep-alive
+      // 5s) would sever such a request mid-flight. Raise them generously so a
+      // slow-but-progressing design isn't killed at the HTTP layer. 0 disables
+      // the request timeout entirely; the LLM client's own inactivity timeout
+      // is what guards against a truly stuck upstream.
+      server.requestTimeout = 0;             // no hard cap on total request time
+      server.headersTimeout = 20 * 60_000;   // 20 min to receive headers
+      server.keepAliveTimeout = 20 * 60_000; // keep idle sockets alive
+      server.timeout = 0;                    // no socket inactivity timeout
     })
     .catch((err) => {
       console.error('[startup] failed to initialise database:', err.message);

@@ -310,6 +310,14 @@ textarea.textarea { font-family: var(--font-mono); resize: vertical; min-height:
 .msg .content > *:last-child { margin-bottom: 0; }
 .msg.error .content { color: var(--red); }
 
+/* Persisted deployment-plan message — subtle accent so it's easy to spot. */
+.msg.plan-msg { scroll-margin-top: 8px; }
+.msg.plan-msg .bubble {
+  border-left: 2px solid var(--accent);
+  padding-left: 12px;
+  border-radius: 4px;
+}
+
 .msg .content h1, .msg .content h2, .msg .content h3,
 .msg .content h4, .msg .content h5, .msg .content h6 {
   font-family: var(--font-serif); font-weight: 400;

@@ -43,6 +43,7 @@ export default function Workspace() {
   const [isThinking, setIsThinking] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDraftingBrief, setIsDraftingBrief] = useState(false);
+  const [scrollToPlanNonce, setScrollToPlanNonce] = useState(0);
   const [showQuickSpec, setShowQuickSpec] = useState(false);
   const [quickSpecBusy, setQuickSpecBusy] = useState(false);
   const [refineBusy, setRefineBusy] = useState(false);
@@ -577,7 +578,11 @@ export default function Workspace() {
         // KPIs and "View plan in chat" become available without waiting
         // for the next poll.
         setActiveProject(prev => prev ? { ...prev, brief: briefText, last_plan: result } : prev);
+        // The server persisted the full plan as a chat message. Pull it in and
+        // scroll to its top so the complete plan shows in chat by default.
+        await refreshActive();
         await refreshProjectsList();
+        setScrollToPlanNonce(n => n + 1);
       } else if (kind === 'diagram') {
         await handleSendMessage('Show me the architecture diagram for this project as a Mermaid flowchart, grouped by edge / app / data / ops tiers. IMPORTANT: emit each Mermaid statement on its own line inside a fenced ```mermaid block — never put the whole graph on a single line.');
       } else if (kind === 'bill') {
@@ -613,9 +618,17 @@ export default function Workspace() {
     finally { setIsGenerating(false); }
   }
 
-  function showPlanInChat() {
-    if (!activeProject?.last_plan?.markdown) return;
-    setActiveProject(p => p ? { ...p, chat: [...(p.chat || []), { role: 'assistant', content: p.last_plan.markdown, ts: new Date().toISOString() }] } : p);
+  async function showPlanInChat() {
+    if (!activeId || !activeProject?.last_plan?.markdown) return;
+    try {
+      // Persist the plan as a fresh assistant turn server-side so it survives
+      // the polling refresh, then refresh and trigger a scroll to its top.
+      await api.planToChat(activeId);
+      await refreshActive();
+      setScrollToPlanNonce(n => n + 1);
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
   async function exportProject() {
@@ -873,6 +886,7 @@ export default function Workspace() {
           onSend={handleSendMessage}
           onClearChat={handleClearChat}
           onUpdateProject={patchProject}
+          scrollToPlanNonce={scrollToPlanNonce}
         />
       )}
 
