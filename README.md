@@ -1,14 +1,12 @@
 # ☁️ The Cloud Infrastructure Architect
 
-> 🌐 **Live demo:** <https://ambatuwin-ai-marathon-2026-as-pria-solo.onrender.com/>
->
-> Deployed on Render (free tier — first request after idle takes ~30 s to
-> wake). Powered by Chutes LLM. Sign in with GitHub; projects persist in
-> PostgreSQL across redeploys.
-
 An **Autonomous Technical Sales Consultant** website that takes a high-level
 requirements brief and autonomously navigates a real AWS catalog to design a
 complete, valid, and quoted enterprise deployment.
+
+> Run it locally — sign in with GitHub; projects persist in PostgreSQL. See
+> [Quick start](#quick-start). A UTF-8 database is required (see
+> [Configuration](#configuration-env)).
 
 Built for the **AI Marathon 2026 — Autonomous Sales Engineer** problem
 statement. The agent parses workloads in natural language, picks regions for
@@ -61,12 +59,12 @@ never sees a price.
   none), then push every file in the project (and the generated plan) straight
   to the repo as files via the Git Trees API — no zip, no local git.
 - **Projects** — name, organise, and switch between architecture engagements. Each project tracks its own brief, region, allowed services, chat history, generated plans, and document set.
-- **Docs** — every project has a pinned **Requirements brief** and any number of additional markdown / Terraform / notes files. Toggle the "eye" on each doc to inject it into chat context. Reference docs in chat with `#docname` (Kiro-style `#File`).
+- **Docs** — every project has a pinned **Requirements brief** and any number of additional files. Create markdown / Terraform / notes inline, or **drag-and-drop / upload** unstructured documents (**PDF, DOCX, PPTX** + text formats). Unstructured files are **preview-only** (extracted text feeds the architect; the original is preserved for download and GitHub sync). Toggle the "eye" on each doc to inject it into chat context. Reference docs in chat with `#docname` (Kiro-style `#File`).
 - **Resources** — every AWS service is a togglable source. The architect is locked to the enabled subset.
-- **Chat** — file uploads (drag-and-drop or click), per-IP rate limiting, attachments persisted as metadata only, optimistic UI, scroll-to-bottom FAB.
-- **Studio** — six one-click actions backed by Chutes: Generate plan, Architecture diagram, Itemized bill, Compliance audit, Terraform skeleton, Sales proposal. Animated KPIs (monthly bill, components, region, compliance pass rate). One-click `.zip` export.
+- **Chat** — drag-and-drop or attach files up to **50 MB each** (PDF / DOCX / PPTX / text); their text is extracted in-browser and fed to the architect. Per-IP rate limiting, attachments persisted as metadata only, optimistic UI, scroll-to-bottom FAB.
+- **Studio** — six one-click actions backed by Chutes: Generate plan, Architecture diagram, Itemized bill, Compliance audit, Terraform skeleton, Sales proposal. Animated KPIs (monthly bill, components, region, compliance pass rate). **Generate plan** posts the full plan straight into chat (and scrolls to its top); **View plan in chat** re-posts and jumps to the latest copy. One-click `.zip` export.
 - **Quick Spec** — Kiro-style "Requirements → Design → Tasks" generator. Saved as a new doc in the project.
-- **In-browser code editor** — line-numbered gutter, Ctrl/Cmd+S, Tab/Shift+Tab indent, list continuation on Enter, three view modes (Edit / Split / Preview), debounced auto-save, AI refine button on the brief.
+- **In-browser code editor** — line-numbered gutter, Ctrl/Cmd+S, Tab/Shift+Tab indent, list continuation on Enter, three view modes (Edit / Split / Preview), debounced auto-save, AI refine button on the brief. Unstructured docs (PDF/DOCX/PPTX) open in a **read-only preview** (inline PDF viewer or extracted-text view) instead of the editor.
 - **Auto-sync** — the workspace polls the active project every 4 s, refreshes on tab focus, and splices new server-created docs into local state instantly. No manual reload required.
 
 ---
@@ -76,15 +74,16 @@ never sees a price.
 | Layer | Tech |
 |---|---|
 | Backend | Node.js ≥ 18, Express |
-| LLM | [Chutes](https://chutes.ai) `/v1/chat/completions` |
+| LLM | [Chutes](https://chutes.ai) `/v1/chat/completions` (streamed, with retry + inactivity timeout) |
 | Default model | `zai-org/GLM-5.1-TEE` (override with `CHUTES_MODEL`) |
 | Frontend | React 18, Vite 5, lucide-react, framer-motion |
+| Document parsing | In-browser text extraction: [pdfjs-dist](https://mozilla.github.io/pdf.js/) (PDF), [JSZip](https://stuk.github.io/jszip/) (DOCX/PPTX) |
 | Markdown | [marked](https://marked.js.org) |
 | Diagrams | [Mermaid](https://mermaid.js.org) (dark theme, with a deterministic single-line → multi-line normaliser) |
 | Pricing | Local catalog `data/aws-catalog.json` (USD on-demand list, 730 h / month) |
-| Persistence | PostgreSQL (`users` + `projects` tables) via `pg` |
+| Persistence | PostgreSQL — **UTF-8 required** (`users` + `projects` + `document_blobs` tables) via `pg` |
 | Auth | GitHub OAuth (cookie sessions, `express-session` + `connect-pg-simple`) |
-| Repo sync | GitHub Git Data (Trees) API — push markdown without zip or local git |
+| Repo sync | GitHub Git Data (Trees) API — push text **and binary** files without zip or local git |
 
 ---
 
@@ -120,10 +119,10 @@ frontend is a single-page React app talking to an Express REST API.
 │   ┌──────────────────────────────────────────────────────────┴────────────┐    │
 │   │                       architect.js  (orchestrator)                    │    │
 │   │                                                                       │    │
-│   │   ┌──────────────────┐   ┌─────────────────────┐   ┌──────────────┐   │    │
-│   │   │ Profile pass     │ → │ Architecture pass   │ → │ Validate &    │   │    │
-│   │   │ (Chutes JSON)    │   │ (constrained LLM)   │   │ price (det.)  │   │    │
-│   │   └──────────────────┘   └─────────────────────┘   └──────┬───────┘   │    │
+│   │   ┌──────────────────────────────────────────┐   ┌──────────────┐   │    │
+│   │   │ Combined design pass                     │ → │ Validate &    │   │    │
+│   │   │ (Chutes JSON: profile + architecture)    │   │ price (det.)  │   │    │
+│   │   └──────────────────────────────────────────┘   └──────┬───────┘   │    │
 │   │                                                            │           │    │
 │   │   chatTurn() · draftBriefFromHistory() · refineBriefFromText()         │    │
 │   │   quickSpec() · findReferencedDocs()                                   │    │
@@ -169,32 +168,43 @@ surface for almost no behavioural gain.
 
 | Function in `lib/architect.js` | Purpose | Output shape |
 |---|---|---|
-| `design()` | Two-pass plan generator: profile → architecture | Validated JSON, pipelined into pricing |
+| `design()` | Single-call plan generator: profile **+** architecture in one JSON object | Validated JSON, pipelined into pricing |
 | `chatTurn()` | Conversational architect with full project context | Markdown with optional Mermaid blocks |
 | `draftBriefFromHistory()` | Synthesise a Requirements Brief from chat | Structured markdown brief |
 | `refineBriefFromText()` | Rewrite raw editor notes into a brief | Structured markdown brief |
 | `quickSpec()` | Kiro-style Requirements → Design → Tasks | Three-section markdown spec |
 
-#### The two-pass design pipeline
+#### The single-pass design pipeline
 
-`design()` deliberately splits planning into two LLM calls so each one is
-small, fast, and cheap to retry:
+`design()` makes **one** LLM call (`DESIGN_SYSTEM`) that returns a combined
+JSON object — `{ "profile": {...}, "architecture": {...} }`. This was
+previously two sequential calls (profile, then architecture); merging them
+removes a whole round trip and, more importantly on shared LLM infrastructure,
+a second queue wait — roughly halving end-to-end generation time without
+dropping any guardrails.
 
-1. **Profile extraction** — temperature 0.1, max 4096 tokens. The LLM reads
-   the brief and emits a typed JSON workload profile (workload type, expected
-   users, region, compliance requirements, budget, storage estimates). This
-   is the only place where free-form natural language becomes structure.
-2. **Architecture proposal** — temperature 0.2, max 16 384 tokens. The LLM
-   receives the profile **and** a constrained service vocabulary (only the
-   services the project has enabled in the Resources panel). It emits a JSON
-   list of components with `service`, `id`, `tier`, `config` (service-typed),
-   `rationale`, and a `diagram_edges` array. The system prompt enumerates the
-   valid `config` shape per service so the model doesn't have to guess.
+1. **Workload profile** — the model reads the brief and fills a typed profile
+   (workload type, expected users, region, compliance requirements, budget,
+   storage estimates). This is the only place where free-form natural language
+   becomes structure.
+2. **Architecture proposal** — using that same profile **and** a constrained
+   service vocabulary (only the services the project has enabled in the
+   Resources panel), the model emits a JSON list of components with `service`,
+   `id`, `tier`, `config` (service-typed), `rationale`, and a `diagram_edges`
+   array. The system prompt enumerates the valid `config` shape per service so
+   the model doesn't have to guess.
 
-Both calls go through `chutes.js` which:
+The call runs at temperature 0.2, max 16 384 tokens, and is tolerant of either
+the combined shape or a bare architecture object. It goes through `chutes.js`
+which:
 
 - Reads `Chutes_api_key` and optional `CHUTES_MODEL` from `.env`.
 - Sends an OpenAI-shape `/v1/chat/completions` request with `Authorization: Bearer …`.
+- **Streams the response** (`stream: true`) so headers arrive immediately and
+  tokens flow continuously — a 10+ minute generation is no longer killed by a
+  total-duration timeout. The client aborts only on **inactivity** (no token
+  for 3 minutes), and **retries** 429 / 5xx / network errors with exponential
+  backoff + jitter (honouring `Retry-After`).
 - Falls back through `message.content` → `reasoning_content` → `reasoning`
   (some Chutes "Thinking" models put the answer in alternate fields).
 - Runs a robust JSON extractor that strips ` ```json ` fences, prose
@@ -245,13 +255,22 @@ same brief through twice and you get the same total to the cent.
 
 ### Accounts, sessions, and PostgreSQL persistence
 
-State lives in **PostgreSQL**, not on disk. Two relational tables replace the
-old `data/projects.json` file:
+State lives in **PostgreSQL**, not on disk. The app uses three relational
+tables (replacing the old `data/projects.json` file), and a `session` table
+created lazily by the session store:
 
 | Table | Purpose | Owner |
 |---|---|---|
 | `users` | One row per GitHub account that signs in: `github_id`, `username`, profile, and the OAuth `access_token` (used for Git API calls). | The running app |
 | `projects` | One row per architecture engagement, tied to a user via a `user_id` foreign key. `documents`, `chat`, and `last_plan` are JSONB columns; `repo` JSONB holds the connected repository for that project (at most one per project, zero allowed). | The running app |
+| `document_blobs` | Original bytes of unstructured/binary documents (PDF, DOCX, PPTX). Kept **out** of the `projects.documents` JSONB (which holds only metadata + extracted text) so the frequently-polled project row stays small. Keyed by `(project_id, doc_id)`, cascades on project delete. | The running app |
+
+> **The database must be UTF-8.** Extracted document text and LLM output
+> routinely contain characters (✅ ● — "smart quotes", CJK, emoji) that
+> `WIN1252`/`LATIN1` cannot store, which makes writes fail at runtime with
+> `has no equivalent in encoding`. `lib/db.js` checks `server_encoding` on boot
+> and refuses to start (with the exact `CREATE DATABASE` command) if it isn't
+> UTF-8.
 
 The only read-only file left is `data/aws-catalog.json` (service catalog,
 regions, prices, compliance frameworks — updated by hand when AWS publishes
@@ -307,15 +326,16 @@ Either way, instead of dumping to a generic directory, this endpoint
 `DELETE /api/projects/:id/github/repo` detaches it (the repo itself is left
 untouched).
 
-#### Syncing markdown without zip or local git
+#### Syncing files without zip or local git
 
-`POST /api/projects/:id/github/sync` pushes every file in the project (each
-document keeps its own name/extension, extensionless files default to `.md`)
-plus the generated `deployment-plan.md` when present, into the project's
-connected repo. To send files without zipping them or installing Git on
-Render, it uses the low-level **Git Trees API** to build a file-structure
-footprint and move the target branch in a single backend flow
-(`lib/github-api.pushFiles`):
+`POST /api/projects/:id/github/sync` pushes every file in the project into the
+project's connected repo: each text document keeps its own name/extension
+(extensionless files default to `.md`), each **unstructured document pushes its
+original bytes** (the stored PDF/DOCX/PPTX, not the extracted text), plus the
+generated `deployment-plan.md` when present. To send files without zipping them
+or installing Git on the host, it uses the low-level **Git Trees API** to build
+a file-structure footprint and move the target branch in a single backend flow
+(`lib/github-api.pushFiles`), base64-encoding both text and binary blobs:
 
 ```
 GET   /repos/:o/:r/git/ref/heads/:branch   → current commit sha (base tree)
@@ -347,11 +367,14 @@ and `POST`ing a fresh ref instead.
   "documents": [
     {
       "id": "d_xxxxxxxx",
-      "type": "brief",              // brief | plan | terraform | proposal | notes
+      "type": "brief",              // brief | plan | terraform | proposal | notes | pdf | docx | pptx | csv
       "name": "Requirements brief",
-      "content": "# Requirements Brief\n…",
+      "content": "# Requirements Brief\n…",  // text, OR extracted text for binary docs
       "included_in_context": true,  // injected into every chat turn
       "pinned": true,                // brief is pinned and undeletable
+      "binary": false,              // true for PDF/DOCX/PPTX → preview-only, never editable
+      "mime": "",                   // original MIME type (binary docs only)
+      "orig_bytes": 0,              // original file size (binary docs only; bytes live in document_blobs)
       "created_at": "…",
       "updated_at": "…"
     }
@@ -380,11 +403,14 @@ and `POST`ing a fresh ref instead.
 
 #### Privacy
 
-- Chat **attachment contents are NOT persisted**. The user message stores
-  only `{ name, bytes }` metadata; the file body lives in memory for one LLM
-  call and is then discarded.
-- Documents the user authors in the editor **are** persisted (that's the
-  whole point of the document store).
+- Chat **attachment contents are NOT persisted**. Attachments are parsed in
+  the browser (text extracted from PDF/DOCX/PPTX/text), and the user message
+  stores only `{ name, bytes }` metadata; the extracted text lives in memory
+  for one LLM call and is then discarded.
+- Documents the user authors or uploads in the Docs tab **are** persisted
+  (that's the whole point of the document store). For unstructured uploads the
+  extracted text lives in the project row and the original bytes live in
+  `document_blobs`.
 - The `.env` file is git-ignored. The `Chutes_api_key`, GitHub client secret,
   and stored OAuth tokens never leave the server process — `users.publicUser()`
   strips the access token before any response reaches the client.
@@ -454,7 +480,7 @@ Putting it all together, here's what happens when a user types
 │  ├─ service-docs.js           Per-service deep documentation
 │  ├─ architect.js              LLM orchestrator: design / chat / draft / spec
 │  ├─ chutes.js                 Chutes API client + JSON extraction
-│  ├─ db.js                     PostgreSQL pool + schema bootstrap (users, projects)
+│  ├─ db.js                     PostgreSQL pool + schema bootstrap (users, projects, document_blobs) + UTF-8 guard
 │  ├─ users.js                  User data-access (GitHub upsert, token)
 │  ├─ projects.js               PostgreSQL project + document CRUD + repo mapping (user-scoped)
 │  ├─ github-config.js          OAuth credential selection (local vs production)
@@ -620,11 +646,23 @@ SESSION_SECRET=a_long_random_string
 DATABASE_URL=postgres://user:pass@localhost:5432/cia
 ```
 
+> **Create the database as UTF-8.** On Windows, the default Postgres template
+> is often `WIN1252`, which cannot store characters found in uploaded
+> documents and LLM output (✅ ● — "smart quotes", CJK, emoji). Create a
+> dedicated UTF-8 database and point `DATABASE_URL` at it:
+>
+> ```sql
+> CREATE DATABASE cia WITH ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
+> ```
+>
+> The server verifies `server_encoding` on boot and refuses to start if it
+> isn't UTF-8.
+
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `Chutes_api_key` | **yes** | — | Bearer token used in `Authorization: Bearer …` against `https://llm.chutes.ai/v1/chat/completions`. Get one at <https://chutes.ai>. |
 | `CHUTES_MODEL`   | no | `zai-org/GLM-5.1-TEE` | Any Chutes-listed chat-completions model id. The full list is returned by `GET https://llm.chutes.ai/v1/models`. |
-| `DATABASE_URL` | **yes** | — | PostgreSQL connection string. TLS is auto-enabled for non-localhost hosts. The schema is created on boot. |
+| `DATABASE_URL` | **yes** | — | PostgreSQL connection string. **Must point at a UTF-8 database** (verified on boot). TLS is auto-enabled for non-localhost hosts. The schema is created on boot. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | prod | — | Production GitHub OAuth app credentials (used when `NODE_ENV=production` or on Render). |
 | `GITHUB_CLIENT_ID_LOCAL` / `GITHUB_CLIENT_SECRET_LOCAL` | local | — | Local GitHub OAuth app credentials (used in development). |
 | `GITHUB_ENV` | no | auto | Force `local` or `production` credential selection, overriding auto-detection. |
@@ -744,18 +782,21 @@ authenticated session** and return `401` otherwise. Catalog routes are public.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET`  | `/api/projects/:id/documents` | Sidebar metadata list |
-| `POST` | `/api/projects/:id/documents` | Create `{ name, type, content?, included_in_context? }` |
+| `GET`  | `/api/projects/:id/documents` | Sidebar metadata list (incl. `binary`, `mime`) |
+| `POST` | `/api/projects/:id/documents` | Create `{ name, type, content?, included_in_context?, binary?, mime?, orig_bytes? }` |
 | `GET`  | `/api/projects/:id/documents/:docId` | Full document body |
-| `PATCH`| `/api/projects/:id/documents/:docId` | Update name / content / context flag / type |
-| `DELETE`| `/api/projects/:id/documents/:docId` | Delete (the brief is undeletable) |
+| `PATCH`| `/api/projects/:id/documents/:docId` | Update name / content / context flag / type (binary docs: rename + context only) |
+| `DELETE`| `/api/projects/:id/documents/:docId` | Delete (the brief is undeletable; also removes any stored blob) |
+| `PUT`  | `/api/projects/:id/documents/:docId/raw` | Upload original bytes for a binary doc (raw body, ≤ 50 MB) |
+| `GET`  | `/api/projects/:id/documents/:docId/raw` | Stream the stored original (`?download=1` to force download) |
 
 ### Chat and generation
 
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/projects/:id/chat` | Conversational turn `{ message, attachments? }`; rate-limited 12/min/IP. Resolves `#docname` references and injects in-context docs into the system prompt. |
-| `POST` | `/api/projects/:id/design` | Run the deterministic plan generator; rate-limited 6/min/IP |
+| `POST` | `/api/projects/:id/design` | Run the deterministic plan generator (single combined LLM call); persists the full plan into chat; rate-limited 6/min/IP |
+| `POST` | `/api/projects/:id/plan-to-chat` | Re-post the current plan into chat as a fresh assistant turn (used by "View plan in chat") |
 | `POST` | `/api/projects/:id/draft-brief` | Synthesise a Requirements Brief from chat history; persists to the brief doc; rate-limited 6/min/IP |
 | `POST` | `/api/projects/:id/refine-brief` | Refine raw editor text into a structured brief; rate-limited 6/min/IP |
 | `POST` | `/api/projects/:id/quick-spec` | Kiro-style Requirements → Design → Tasks; saved as a new doc; rate-limited 6/min/IP |
@@ -830,10 +871,8 @@ pricing snapshot.
   Brief
     │
     ▼
-  Chutes LLM        →  workload profile (JSON)
-    │
-    ▼
-  Chutes LLM        →  architecture proposal (JSON, constrained vocabulary)
+  Chutes LLM        →  workload profile + architecture proposal
+  (one streamed call)  (combined JSON, constrained vocabulary)
     │
     ▼
   ┌──────── DETERMINISTIC GUARDRAILS (lib/catalog.js) ────────┐
@@ -919,6 +958,22 @@ behind a proxy.
 missing, wrong, or the database is unreachable. For hosted Postgres, TLS is
 auto-enabled; for localhost it's disabled. Verify with
 `psql "$DATABASE_URL" -c "select 1"`.
+
+**Server refuses to start: "Database server_encoding is WIN1252, but this app
+requires UTF8".** Your database isn't UTF-8 (common on Windows Postgres).
+Create a UTF-8 database and repoint `DATABASE_URL`:
+`CREATE DATABASE cia WITH ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;`
+The same root cause shows up at write time as
+`character ... has no equivalent in encoding "WIN1252"` if an old non-UTF-8
+database is still connected.
+
+**`Generate plan` runs for many minutes.** That's expected on busy shared
+infrastructure — large designs genuinely take a while. The request is
+**streamed**, so it won't be cut off as long as tokens keep arriving; the
+client only aborts after 3 minutes of total silence, and the HTTP server /
+dev-proxy timeouts are raised to 20 min. If it fails with
+`Chutes API 429: Infrastructure is at maximum capacity`, the provider is
+saturated — wait and retry, or switch `CHUTES_MODEL` to a less-loaded model.
 
 **`401` from `/api/projects` in a script.** Project routes now require a
 session. Sign in through the browser, or carry the `cia.sid` cookie in your
