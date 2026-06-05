@@ -62,27 +62,32 @@ export default function ChatPane({ project, regions, isThinking, onSend, onClear
   }, [project?.chat]);
 
   // "View plan in chat" — scroll to the TOP of the most recent persisted plan
-  // document message. Bumping the nonce (even when the plan message is already
-  // the last one) re-triggers the scroll.
+  // document message. This runs ONLY when the nonce changes (a deliberate
+  // button press), never on new chat messages — otherwise every new turn
+  // would yank the view back up to the plan.
   useEffect(() => {
     if (!scrollToPlanNonce) return;
-    const chat = project?.chat || [];
-    let target = -1;
-    for (let i = chat.length - 1; i >= 0; i--) {
-      if (chat[i]?.meta?.kind === 'plan-document') { target = i; break; }
-    }
-    if (target === -1) return;
-    // Defer until after the message list has painted.
-    requestAnimationFrame(() => {
-      const el = msgRefs.current[target];
+    let attempts = 0;
+    const tryScroll = () => {
+      const chat = project?.chat || [];
+      let target = -1;
+      for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i]?.meta?.kind === 'plan-document') { target = i; break; }
+      }
+      const el = target !== -1 ? msgRefs.current[target] : null;
       const stream = streamRef.current;
       if (el && stream) {
         stickToBottomRef.current = false;
-        // Align the top of the plan message with the top of the scroll area.
         stream.scrollTo({ top: el.offsetTop - 8, behavior: 'smooth' });
+        return;
       }
-    });
-  }, [scrollToPlanNonce, project?.chat?.length]);
+      // The plan message may not be painted yet (state still settling) — retry
+      // a few frames before giving up.
+      if (attempts++ < 10) requestAnimationFrame(tryScroll);
+    };
+    requestAnimationFrame(tryScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToPlanNonce]);
 
   function clearAttachments() { setAttachments([]); setUploadError(null); }
 
